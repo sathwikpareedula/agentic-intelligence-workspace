@@ -10,6 +10,7 @@ This is an early threat checklist. Every item below is a risk or design requirem
 
 - Risk: oversized, malformed, mislabeled, executable, or sensitive uploads may exhaust resources or cause unintended processing.
 - Design requirements: define size and type limits, validate content independently of filenames, isolate processing, handle archives safely, and establish retention and deletion rules.
+- Implemented for PDFs: `.pdf` extension and PDF signature validation, a configurable 20 MiB default limit, 500-page and extracted-text limits, strict in-memory parsing, encrypted-document rejection, and no uploaded-file persistence. PDF parser sandboxing and malware scanning remain future work.
 
 ### Path Traversal
 
@@ -34,16 +35,19 @@ This is an early threat checklist. Every item below is a risk or design requirem
 
 - Risk: uploaded documents or retrieved content may contain instructions designed to override system policy or trigger unsafe tool use.
 - Design requirements: treat source content as untrusted data, preserve instruction boundaries, constrain tools independently of prompts, require authorization checks, and evaluate direct and indirect injection attacks.
+- Retrieval treats extracted text exclusively as untrusted evidence data. It is embedded, stored, and returned without being interpreted as instructions; no LLM or tool-execution path consumes document instructions in this milestone.
 
 ### Secrets
 
 - Risk: credentials may enter source control, prompts, artifacts, telemetry, or logs.
 - Design requirements: use environment or managed secret storage, prevent secret logging, scope and rotate credentials, scan for accidental exposure, and document incident handling.
+- PostgreSQL credentials and the embedding-provider API key are read from environment variables and are not returned by API models or included in the example environment file as real values.
 
 ### Cross-User Data Access
 
 - Risk: one user may retrieve another user's inputs, embeddings, traces, or artifacts.
 - Design requirements: define tenant boundaries, enforce isolation at every storage and retrieval layer, include negative authorization tests, and prevent cross-tenant cache leakage.
+- Current limitation: retrieval supports document-ID filtering but has no users, authentication, authorization, or tenant boundary. It must not be deployed as a multi-user service until those controls and negative tests exist.
 
 ### Authorization
 
@@ -54,16 +58,19 @@ This is an early threat checklist. Every item below is a risk or design requirem
 
 - Risk: an orchestrator may invoke overly powerful tools or exceed the scope of the user's request.
 - Design requirements: give tools narrow typed interfaces and least privilege, enforce policy outside the model, separate read and write capabilities, apply budgets, and confirm destructive or unexpectedly broad actions.
+- Implemented: strict Pydantic tool contracts, explicit unknown/invalid-tool observations, trace body redaction, bounded loops, and no arbitrary code/SQL/shell tool.
 
 ### Malicious Documents
 
 - Risk: documents may exploit parsers, carry active content, conceal payloads, or poison retrieval results.
 - Design requirements: sandbox parsing, patch dependencies, disable active content, validate extraction, preserve provenance, scan where appropriate, and test adversarial documents.
+- Current PDF ingestion extracts text only and does not execute embedded scripts, actions, attachments, macros, or document instructions. Malformed, encrypted, oversized, empty, and no-text PDFs fail explicitly. Parser sandboxing, antivirus scanning, and OCR are not implemented.
 
 ### Logging
 
 - Risk: logs and traces may leak personal data, document contents, secrets, or sensitive model/tool inputs.
 - Design requirements: define a data classification and redaction policy, minimize recorded content, control and audit access, set retention limits, and keep enough safe metadata for incident response and reproducibility.
+- Implemented: bounded request IDs and completion logs containing method, route, status, timing, and request ID rather than request bodies. Production redaction and retention policy remains pending.
 
 ### Rate Limiting
 

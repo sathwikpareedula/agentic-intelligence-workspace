@@ -4,7 +4,7 @@ This log records verified project progress. Planned work should not be presented
 
 ## Current Status
 
-Milestone 1B: deterministic dataset transformation, analysis, joins, and artifact generation verified through typed APIs and service-layer operations.
+Milestones 3-9 foundation: bounded execution, mixed reasoning, verification, workflows, artifacts, sales demo, frontend foundation, and productization implemented and verified where noted below.
 
 ## Milestone History
 
@@ -20,6 +20,15 @@ Milestone 1B: deterministic dataset transformation, analysis, joins, and artifac
 - 2026-09-02: Added inner, left, right, and outer joins with matched/unmatched counts and explicit repeated-key and many-to-many multiplication diagnostics.
 - 2026-09-02: Added in-memory CSV/XLSX artifact generation with safe generated filenames and response metadata.
 - 2026-09-02: Verified 28 backend tests and a live inspect, clean, join, aggregate, derive, XLSX export, and artifact read-back workflow through Uvicorn; `GET /health` remained healthy.
+- 2026-09-02: Added bounded in-memory PDF text extraction, deterministic overlapping page chunks, and stable content-derived document/chunk identifiers with explicit no-OCR behavior.
+- 2026-09-02: Added a batched OpenAI embedding provider behind a tested interface and PostgreSQL/pgvector storage using exact cosine similarity, document filtering, and source provenance.
+- 2026-09-02: Added `POST /documents` and `POST /retrieval/search`; retrieval returns ranked evidence with document, filename, page, and chunk citations and does not generate answers.
+- 2026-09-02: Verified 43 backend tests, a live fake-backed PDF ingestion/search flow through Uvicorn, and a controlled three-query retrieval evaluation with Hit@2 and MRR.
+- 2026-09-03: Added the bounded orchestrator, strict tools, deterministic fake model, recoverable observations, trace provenance/timing, and agent API boundary.
+- 2026-09-03: Added grades/syllabus mixed reasoning, evidence-based verification, versioned recipes with schema drift, management artifacts/charts, and the known-ground-truth August sales demo.
+- 2026-09-03: Added a Next.js workspace foundation; TypeScript and the optimized production build passed. Browser interaction verification remains pending.
+- 2026-09-03: Added Docker service composition, CI, request IDs/logging, CORS, and readiness behavior.
+- 2026-09-03: Upgraded the frontend to Next.js 16.3.4 after `npm audit` identified transitive PostCSS advisories; the repeat audit reported zero vulnerabilities and typecheck/build passed.
 
 ## Technologies Actually Used
 
@@ -33,6 +42,9 @@ Milestone 1B: deterministic dataset transformation, analysis, joins, and artifac
 - pandas for deterministic tabular ingestion, inspection, and profiling.
 - openpyxl for read-only, data-only `.xlsx` workbook ingestion.
 - python-multipart for bounded FastAPI file-upload request parsing.
+- pypdf for non-executing PDF text extraction.
+- psycopg and pgvector for the production-intended PostgreSQL vector repository.
+- OpenAI SDK for the configured hosted embedding-provider implementation.
 
 Add technologies here only after they are actually used in the project.
 
@@ -42,16 +54,21 @@ Add technologies here only after they are actually used in the project.
 - Keep calculations, transformations, joins, statistics, and schema checks in deterministic code.
 - Defer implementation technology adoption until its milestone requires it.
 - Defer DuckDB and SQL execution because the current typed pandas operations satisfy the bounded analytics scope without introducing another query and security boundary.
+- Use PostgreSQL with pgvector as the retrieval store, exact cosine search initially, and interfaces for both vector storage and embedding providers.
 
 Material decisions should receive a record under `docs/decisions/`.
 
 ## Bugs and Problems Solved
 
-None yet.
+- Removed known frontend dependency advisories by upgrading to the audit-recommended patched Next.js release and re-verifying the production build.
 
 ## Evaluation Results
 
-- Backend test suite: 28 tests passed, covering health, ingestion, inspection, profiling, transformations, aggregation, all supported join types and diagnostics, validation failures, upload limits, CSV/XLSX artifact read-back, and spreadsheet-formula neutralization.
+- Backend test suite: 67 tests passed across structured data, retrieval, orchestration, mixed reasoning, verification, workflows, artifacts, sales evaluation, and API behavior.
+- Controlled offline retrieval evaluation: 3 queries at `top_k=2`, Hit@2 = 1.0 and mean reciprocal rank = 1.0. This measures the fixed token-hash test corpus, not hosted embedding quality or production recall.
+- Frontend verification: TypeScript passed, Next.js 16.3.4 optimized production build passed, and `npm audit` reported zero vulnerabilities.
+- Docker configuration was added but could not be executed or validated because Docker is unavailable in this environment.
+- Browser interaction QA could not run because no controllable browser was available; this remains explicitly pending despite successful frontend build verification.
 
 ## Performance Results
 
@@ -64,6 +81,8 @@ No performance measurements have been run yet.
 - Transformation requests use a closed typed operation set with unknown fields rejected; no arbitrary Python or SQL execution is available.
 - Exported artifacts remain request-scoped in memory and use service-generated sanitized filenames rather than user-controlled filesystem paths.
 - Formula-like text is neutralized during CSV/XLSX export to prevent uploaded strings from becoming active spreadsheet formulas.
+- PDF content is bounded and treated as untrusted evidence data; it is never executed or treated as system instructions.
+- Retrieval credentials come from environment variables; API responses preserve document/page/chunk provenance and never fabricate citations.
 
 ## What I Learned
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-The implemented backend uses FastAPI and provides `GET /health` plus typed APIs for bounded CSV/XLSX ingestion, inspection, profiling, transformations, joins, aggregation, and in-memory CSV/XLSX artifact generation. These capabilities have pytest coverage. The remaining V1 architecture described below is conceptual and should not be read as implemented.
+The implemented FastAPI backend provides deterministic structured-data operations, PDF evidence retrieval, a bounded single orchestrator, mixed grade and sales tools, evidence-based verification, in-memory workflow persistence, and provenance-carrying artifacts. Tests use deterministic in-memory providers; live provider/database verification remains pending.
 
 The frontend will not be built first. Early work will establish deterministic data behavior, contracts, evidence handling, and evaluation before investing in a production interface.
 
@@ -22,7 +22,7 @@ PostgreSQL + pgvector / File storage
 Artifacts and trace
 ```
 
-FastAPI, deterministic structured-data services, and request-scoped tabular artifacts are implemented. The other named technologies and components above remain planned candidates for V1, not current dependencies or implemented services.
+All layers in the diagram now have initial implementations. Durable workflow/artifact persistence, production model-provider wiring, and production operations remain incomplete.
 
 ## Responsibilities
 
@@ -32,11 +32,11 @@ Provide a thin interaction layer for goals, user confirmations, progress, eviden
 
 ### API Layer
 
-FastAPI is the implemented API boundary for health checks and typed CSV/XLSX inspection, profiling, transformation, join, and export requests. Authentication, authorization, job interaction, and persistent artifact access remain future work.
+FastAPI is the implemented API boundary for health checks, typed structured-data operations, PDF ingestion, and evidence retrieval. Authentication, authorization, job interaction, and persistent artifact access remain future work.
 
 ### Orchestrator
 
-One orchestrator is preferred initially. It should understand intent, create a bounded plan, select typed tools, interpret results, request clarification when needed, and explain outputs. Multi-agent architecture should be introduced only if future evaluation demonstrates a concrete benefit.
+One orchestrator runs a bounded decide/observe loop over a strict tool registry. It records validated redacted arguments, outcomes, provenance IDs, errors, and timing. A scripted provider supports offline tests; no production chat-model provider is wired yet.
 
 ### Deterministic Data Tools
 
@@ -44,19 +44,19 @@ Current deterministic services ingest CSV/XLSX data; inspect and profile dataset
 
 ### Retrieval Tools
 
-Retrieval should ingest, index, locate, and cite evidence from unstructured documents while preserving source provenance. Retrieval results are evidence candidates, not automatically verified conclusions.
+The retrieval service validates and extracts text from PDFs in memory, chunks normalized page text deterministically with configurable overlap, embeds chunks through a provider interface, and stores them through a document repository interface. The default hosted provider is OpenAI `text-embedding-3-small`; tests and evaluation use an offline deterministic fake. Results are ranked evidence candidates with document, filename, page, and chunk provenance, not generated answers or verified conclusions. Scanned/image-only documents require future OCR and are rejected when no text is extractable.
 
 ### Verification
 
-Verification should check schemas, tool outputs, evidence coverage, citations, assumptions, and artifact consistency. Missing or conflicting evidence must be surfaced rather than filled in by the model.
+Verification checks declared numeric claims against deterministic outputs and document claims against observed citation IDs. It propagates failed calculations and conflict/insufficiency states. It is deliberately not a universal truth verifier.
 
 ### Storage
 
-PostgreSQL and pgvector are intended future storage components for application records and retrieval indexes. File storage is intended for inputs and artifacts. Data isolation, retention, and access policies must be designed before production use.
+The implemented retrieval repository stores document metadata, page-scoped chunks, and fixed-dimension vectors in PostgreSQL with pgvector. Search uses exact cosine distance and returns cosine similarity as `1 - distance`, with optional document filtering and deterministic ID tie-breaking. The repository interface also has an in-memory exact-cosine implementation for tests and controlled evaluation. Live PostgreSQL integration has not been verified in the current environment. Uploaded PDFs are not persisted as files. Tenant isolation, retention, migration tooling, connection pooling, and production access policies remain future work.
 
 ### Artifacts and Trace
 
-CSV and XLSX tabular artifacts are currently generated in memory with safe generated filenames and response metadata; no persistent artifact store exists. Future trace behavior should record inputs, tool calls, deterministic results, evidence references, decisions, user confirmations, errors, and produced artifacts sufficiently to support inspection and reproducibility. Sensitive data must not be logged indiscriminately.
+CSV/XLSX and management workbooks are generated in memory with IDs, shape, producer references, provenance, formula neutralization, and optional deterministic charts. File bodies are redacted from traces. In-memory repositories support tests; durable persistence is not implemented.
 
 ## Cross-Cutting Requirements
 

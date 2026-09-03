@@ -29,12 +29,35 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [ ] Implement broader calculation, validation, provenance, and evaluation behavior.
 - Measure correctness, failure behavior, performance, and cost where applicable.
 
+### Milestone 2 — Retrieval and knowledge foundation
+
+- [x] Add bounded PDF text ingestion with explicit no-OCR behavior.
+- [x] Add deterministic page-preserving chunking with stable document and chunk identifiers.
+- [x] Add a batched embedding-provider interface and hosted OpenAI implementation with offline test doubles.
+- [x] Add PostgreSQL/pgvector document and chunk storage with exact cosine retrieval and document filtering.
+- [x] Add typed PDF ingestion and ranked evidence-search APIs with document/page/chunk citations.
+- [x] Add controlled retrieval evaluation with per-query rankings, Hit@K, and MRR.
+- [ ] Verify PostgreSQL/pgvector and hosted embeddings against live local infrastructure.
+- [ ] Add OCR, tenant isolation, retention, and production database migration/operations controls.
+
 ## LATER
+
+### Milestone 3 — Agentic execution and trustworthy workflows
+
+- [x] Add one bounded orchestrator, fake provider, strict tool registry, replanning observations, and complete traces.
+- [x] Implement the mixed grades/PDF calculation with citations and deterministic arithmetic.
+- [x] Add numeric/citation verification and conflict/failure/insufficiency states.
+- [x] Add versioned recipes with reruns, validation, and schema-drift detection.
+- [x] Add artifact provenance, management XLSX generation, and the known-ground-truth August sales flow.
+- [x] Add a functional Next.js workspace foundation and local TypeScript verification.
+- [x] Add Docker definitions, service composition, CI, request IDs/logging, CORS, and readiness.
+- [ ] Wire and evaluate a production orchestrator provider.
+- [ ] Add durable workflow/artifact repositories and artifact download APIs.
+- [x] Complete frontend typecheck and production-build verification.
+- [ ] Complete browser interaction and accessibility verification.
 
 The ordering within this section remains subject to dependencies and evaluation evidence.
 
-- Document ingestion and RAG
-- PostgreSQL and pgvector
 - Typed tools
 - Agent orchestrator
 - Mixed structured + unstructured reasoning
