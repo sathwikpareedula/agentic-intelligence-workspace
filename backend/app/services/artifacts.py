@@ -88,6 +88,75 @@ def generate_management_workbook(
     )
 
 
+def generate_sales_management_workbook(
+    cleaned_transactions: pd.DataFrame,
+    regional_performance: pd.DataFrame,
+    commissions: pd.DataFrame,
+    *,
+    provenance: dict[str, str],
+) -> GeneratedArtifact:
+    """Produce the complete August management workbook with auditable source-derived tables."""
+    output = BytesIO()
+    frames = {
+        "Cleaned Transactions": _sanitize_spreadsheet_strings(cleaned_transactions),
+        "Regional Performance": _sanitize_spreadsheet_strings(regional_performance),
+        "Commissions": _sanitize_spreadsheet_strings(commissions),
+    }
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for sheet_name, frame in frames.items():
+            frame.to_excel(writer, sheet_name=sheet_name, index=False)
+        summary = pd.DataFrame(
+            {
+                "Metric": ["Completed transactions", "Regions", "Salespeople", "Total net sales", "Total commission"],
+                "Value": [
+                    len(cleaned_transactions),
+                    len(regional_performance),
+                    len(commissions),
+                    float(cleaned_transactions["net_sales"].sum()),
+                    float(commissions["commission"].sum()),
+                ],
+            }
+        )
+        summary.to_excel(writer, sheet_name="Summary", index=False)
+        pd.DataFrame(list(provenance.items()), columns=["Property", "Value"]).to_excel(
+            writer, sheet_name="Provenance", index=False
+        )
+
+        regional_sheet = writer.book["Regional Performance"]
+        chart = BarChart()
+        chart.type = "col"
+        chart.title = "Regional sales vs target"
+        chart.y_axis.title = "Amount"
+        chart.x_axis.title = "Region"
+        header_index = {cell.value: cell.column for cell in regional_sheet[1]}
+        chart.add_data(
+            Reference(
+                regional_sheet,
+                min_col=header_index["net_sales"],
+                max_col=header_index["target"],
+                min_row=1,
+                max_row=len(regional_performance) + 1,
+            ),
+            titles_from_data=True,
+        )
+        chart.set_categories(
+            Reference(regional_sheet, min_col=header_index["region"], min_row=2, max_row=len(regional_performance) + 1)
+        )
+        writer.book["Summary"].add_chart(chart, "D2")
+
+    return GeneratedArtifact(
+        filename="august_sales_management_report.xlsx",
+        format="xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        row_count=len(regional_performance),
+        column_count=len(regional_performance.columns),
+        content=output.getvalue(),
+        artifact_id=uuid4(),
+        created_at=datetime.now(timezone.utc),
+        provenance=provenance,
+    )
+
+
 class InMemoryArtifactRepository:
     """Request-independent test repository behind a small persistence boundary."""
 

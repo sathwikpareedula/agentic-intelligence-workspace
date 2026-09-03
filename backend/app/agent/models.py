@@ -3,8 +3,11 @@
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
+import base64
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.models.retrieval import SourceReference
 
 
 class StrictModel(BaseModel):
@@ -33,6 +36,10 @@ class AnswerClaim(StrictModel):
 ModelDecision = Annotated[ToolCall | Complete, Field(discriminator="type")]
 
 
+class ModelDecisionEnvelope(StrictModel):
+    decision: ModelDecision
+
+
 class ToolObservation(StrictModel):
     success: bool
     summary: str
@@ -54,6 +61,15 @@ class TraceStep(StrictModel):
     duration_ms: float = Field(ge=0)
 
 
+class ArtifactReference(StrictModel):
+    artifact_id: UUID
+    filename: str
+    media_type: str
+    download_url: str
+    row_count: int = Field(ge=0)
+    column_count: int = Field(ge=0)
+
+
 class AgentExecution(StrictModel):
     task_id: UUID = Field(default_factory=uuid4)
     goal: str
@@ -64,6 +80,8 @@ class AgentExecution(StrictModel):
     completed_at: datetime
     failure_reason: str | None = None
     verification: "VerificationReport | None" = None
+    citations: list[SourceReference] = Field(default_factory=list)
+    artifacts: list[ArtifactReference] = Field(default_factory=list)
 
 
 class VerificationFinding(StrictModel):
@@ -80,3 +98,21 @@ class VerificationReport(StrictModel):
 class AgentTaskRequest(StrictModel):
     goal: str = Field(min_length=1, max_length=10000)
     max_iterations: int = Field(default=8, ge=1, le=25)
+    resources: "AgentTaskResources | None" = None
+
+
+class AgentDatasetResource(StrictModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1, max_length=14_000_000)
+    sheet: str | None = Field(default=None, max_length=255)
+
+    def content(self) -> bytes:
+        try:
+            return base64.b64decode(self.content_base64, validate=True)
+        except ValueError as exc:
+            raise ValueError("content_base64 is not valid base64.") from exc
+
+
+class AgentTaskResources(StrictModel):
+    dataset: AgentDatasetResource
+    document_id: UUID

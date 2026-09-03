@@ -1,0 +1,10 @@
+{
+  "grade_required_final": 94.666667,
+  "sales": {
+    "largest_underperformance_region": "North",
+    "largest_underperformance": 650.0,
+    "north_net_sales": 1350.0,
+    "alice_commission": 67.5,
+    "left_unmatched_rows": 1
+  }
+}

@@ -5,8 +5,9 @@ from functools import lru_cache
 from fastapi import Depends, HTTPException, status
 
 from app.config import ConfigurationError, Settings, get_settings
+from app.embeddings.deterministic import DeterministicEmbeddingProvider
 from app.embeddings.openai_provider import OpenAIEmbeddingProvider
-from app.repositories.documents import PostgresDocumentRepository, RepositoryError
+from app.repositories.documents import InMemoryDocumentRepository, PostgresDocumentRepository, RepositoryError
 from app.services.retrieval import RetrievalService
 
 
@@ -22,7 +23,19 @@ def _openai_provider(api_key: str, model: str, dimension: int, batch_size: int) 
     return OpenAIEmbeddingProvider(api_key, model, dimension, batch_size)
 
 
+@lru_cache
+def _demo_repository() -> InMemoryDocumentRepository:
+    return InMemoryDocumentRepository()
+
+
+@lru_cache
+def _deterministic_provider() -> DeterministicEmbeddingProvider:
+    return DeterministicEmbeddingProvider()
+
+
 def get_document_repository(settings: Settings = Depends(get_settings)):
+    if settings.app_mode == "demo":
+        return _demo_repository()
     if not settings.database_url:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -35,6 +48,8 @@ def get_document_repository(settings: Settings = Depends(get_settings)):
 
 
 def get_embedding_provider(settings: Settings = Depends(get_settings)):
+    if settings.app_mode == "demo":
+        return _deterministic_provider()
     if settings.embedding_provider != "openai":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -62,3 +77,12 @@ def get_retrieval_service(
         return RetrievalService(repository, embedding_provider, settings.pdf_max_upload_bytes)
     except ConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+def build_retrieval_service(settings: Settings) -> RetrievalService:
+    """Construct the configured retrieval service outside FastAPI dependency injection."""
+    return RetrievalService(
+        get_document_repository(settings),
+        get_embedding_provider(settings),
+        settings.pdf_max_upload_bytes,
+    )

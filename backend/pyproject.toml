@@ -28,6 +28,7 @@ test = [
 
 [project.scripts]
 retrieval-eval = "app.evaluation.retrieval:main"
+product-eval = "app.evaluation.product:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

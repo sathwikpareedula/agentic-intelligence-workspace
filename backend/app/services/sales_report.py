@@ -7,7 +7,7 @@ import pandas as pd
 
 from app.models.grades import PolicyEvidence
 from app.models.transformations import JoinSpec
-from app.services.artifacts import GeneratedArtifact, generate_management_workbook
+from app.services.artifacts import GeneratedArtifact, generate_sales_management_workbook
 from app.services.transformations import JoinDiagnostics, join_datasets
 
 
@@ -76,10 +76,10 @@ def build_august_sales_report(
     commissions = cleaned.groupby("salesperson", as_index=False).agg(net_sales=("net_sales", "sum"), commission=("commission", "sum"))
     commissions = commissions.sort_values("salesperson", kind="stable").reset_index(drop=True)
 
-    artifact_frame = regional.copy()
-    artifact = generate_management_workbook(
-        artifact_frame,
-        "august_sales",
+    artifact = generate_sales_management_workbook(
+        cleaned,
+        regional,
+        commissions,
         provenance={
             "transactions": "preserved; report operates on an in-memory copy",
             "commission_policy_sources": ",".join(str(source.chunk_id) for source in citations),

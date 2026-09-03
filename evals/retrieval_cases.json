@@ -57,6 +57,14 @@
     {
       "query": "Where should a phishing email be reported?",
       "expected_chunk_id": "33000000-0000-0000-0000-000000000001"
+    },
+    {
+      "query": "What happens to remote work equipment when employment ends?",
+      "expected_chunk_id": "11000000-0000-0000-0000-000000000002"
+    },
+    {
+      "query": "Which class should employees use for air travel?",
+      "expected_chunk_id": "22000000-0000-0000-0000-000000000002"
     }
   ]
 }

@@ -1,7 +1,9 @@
 """Tests for PDF ingestion, chunking, embeddings, retrieval, and citations."""
 
 from io import BytesIO
+import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -13,7 +15,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from app.dependencies import get_retrieval_service
 from app.embeddings.base import EmbeddingError
 from app.embeddings.openai_provider import OpenAIEmbeddingProvider
-from app.evaluation.retrieval import EvaluationEmbeddingProvider, evaluate_cases
+from app.evaluation.retrieval import EvaluationEmbeddingProvider, evaluate_cases, main as retrieval_evaluation_main
 from app.main import app
 from app.repositories.documents import InMemoryDocumentRepository
 from app.services.pdf_documents import (
@@ -260,7 +262,21 @@ def test_controlled_retrieval_evaluation() -> None:
 
     result = evaluate_cases(path)
 
-    assert result["query_count"] == 3
+    assert result["query_count"] == 5
     assert result["hit_at_k"] == 1.0
     assert result["mean_reciprocal_rank"] == 1.0
     assert all(case["passed"] for case in result["cases"])
+
+
+def test_retrieval_evaluation_cli_fails_when_a_case_misses(monkeypatch, tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "evals" / "retrieval_cases.json"
+    cases = json.loads(source.read_text(encoding="utf-8"))
+    cases["queries"][0]["expected_chunk_id"] = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    path = tmp_path / "retrieval_cases.json"
+    path.write_text(json.dumps(cases), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["retrieval-eval", str(path)])
+
+    with pytest.raises(SystemExit) as error:
+        retrieval_evaluation_main()
+
+    assert error.value.code == 1

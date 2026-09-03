@@ -15,6 +15,10 @@ class WorkflowError(Exception):
     """Raised for missing or incompatible workflow recipes."""
 
 
+class WorkflowNotFoundError(WorkflowError):
+    """Raised when a workflow is absent from process-local storage."""
+
+
 class WorkflowRepository(Protocol):
     def save(self, workflow: Workflow) -> None: ...
     def get(self, workflow_id: UUID) -> Workflow | None: ...
@@ -53,11 +57,14 @@ class WorkflowService:
     def get(self, workflow_id: UUID) -> Workflow:
         workflow = self._repository.get(workflow_id)
         if workflow is None:
-            raise WorkflowError("Workflow was not found.")
+            raise WorkflowNotFoundError("Workflow was not found or has expired.")
         return workflow
 
     def rerun(self, workflow_id: UUID, overrides: dict[int, dict]) -> WorkflowRun:
         workflow = self.get(workflow_id)
+        invalid_steps = sorted(index for index in overrides if index > len(workflow.steps))
+        if invalid_steps:
+            raise WorkflowError(f"Overrides reference nonexistent step(s): {invalid_steps}.")
         observations = []
         for index, step in enumerate(workflow.steps, 1):
             tool = self._registry.get(step.tool)
@@ -69,7 +76,7 @@ class WorkflowService:
                 if step.expected_columns is not None:
                     _check_schema(validated, step.expected_columns)
                 observation = tool.handler(validated)
-            except (ValidationError, ValueError, WorkflowError, Exception) as exc:
+            except Exception as exc:
                 return _failed(workflow, observations, index, str(exc))
             observations.append(observation)
             if not observation.success:

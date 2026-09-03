@@ -1,7 +1,7 @@
 """Versioned deterministic workflow recipe contracts."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,7 +32,7 @@ class Workflow(WorkflowCreate):
 
 
 class WorkflowRerunRequest(StrictModel):
-    step_overrides: dict[int, dict[str, Any]] = Field(default_factory=dict)
+    step_overrides: dict[Annotated[int, Field(ge=1)], dict[str, Any]] = Field(default_factory=dict)
 
 
 class WorkflowRun(StrictModel):

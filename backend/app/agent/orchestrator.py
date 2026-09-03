@@ -5,7 +5,8 @@ from time import perf_counter
 
 from pydantic import ValidationError
 
-from app.agent.models import AgentExecution, Complete, ToolObservation, TraceStep
+from app.agent.models import AgentExecution, ArtifactReference, Complete, ToolObservation, TraceStep
+from app.models.retrieval import SourceReference
 from app.agent.providers import ModelProvider
 from app.agent.tools import ToolRegistry
 from app.agent.verification import EvidenceVerifier
@@ -25,10 +26,10 @@ class AgentOrchestrator:
             try:
                 decision = self._provider.decide(goal, observations)
             except Exception as exc:
-                return self._finish(goal, started_at, trace, "failed", failure_reason=f"Model provider failed: {exc}")
+                return self._finish(goal, started_at, trace, observations, "failed", failure_reason=f"Model provider failed: {exc}")
             if isinstance(decision, Complete):
                 verification = self._verifier.verify(decision.claims, observations) if self._verifier else None
-                return self._finish(goal, started_at, trace, "completed", answer=decision.answer, verification=verification)
+                return self._finish(goal, started_at, trace, observations, "completed", answer=decision.answer, verification=verification)
 
             began = perf_counter()
             tool = self._registry.get(decision.tool)
@@ -62,12 +63,13 @@ class AgentOrchestrator:
             goal,
             started_at,
             trace,
+            observations,
             "iteration_limit",
             failure_reason=f"Agent reached the {max_iterations}-iteration limit.",
         )
 
     @staticmethod
-    def _finish(goal, started_at, trace, status, answer=None, failure_reason=None, verification=None) -> AgentExecution:
+    def _finish(goal, started_at, trace, observations, status, answer=None, failure_reason=None, verification=None) -> AgentExecution:
         return AgentExecution(
             goal=goal,
             status=status,
@@ -77,6 +79,8 @@ class AgentOrchestrator:
             completed_at=datetime.now(timezone.utc),
             failure_reason=failure_reason,
             verification=verification,
+            citations=_citations(observations),
+            artifacts=_artifacts(observations),
         )
 
 
@@ -93,3 +97,42 @@ def _trace_safe(arguments: dict) -> dict:
         else:
             result[key] = value
     return result
+
+
+def _citations(observations: list[ToolObservation]) -> list[SourceReference]:
+    citations: dict[str, SourceReference] = {}
+    for observation in observations:
+        if not observation.result:
+            continue
+        for candidate in _source_candidates(observation.result):
+            try:
+                source = SourceReference.model_validate(candidate)
+            except ValidationError:
+                continue
+            citations[str(source.chunk_id)] = source
+    return list(citations.values())
+
+
+def _source_candidates(value):
+    if isinstance(value, dict):
+        if {"document_id", "filename", "page_number", "chunk_id"}.issubset(value):
+            yield value
+        for child in value.values():
+            yield from _source_candidates(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _source_candidates(child)
+
+
+def _artifacts(observations: list[ToolObservation]) -> list[ArtifactReference]:
+    artifacts: dict[str, ArtifactReference] = {}
+    for observation in observations:
+        candidate = (observation.result or {}).get("artifact")
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            artifact = ArtifactReference.model_validate(candidate)
+        except ValidationError:
+            continue
+        artifacts[str(artifact.artifact_id)] = artifact
+    return list(artifacts.values())

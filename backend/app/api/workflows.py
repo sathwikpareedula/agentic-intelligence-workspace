@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 
 from app.models.workflows import Workflow, WorkflowCreate, WorkflowRerunRequest, WorkflowRun
-from app.services.workflows import WorkflowError, WorkflowService
+from app.services.workflows import WorkflowError, WorkflowNotFoundError, WorkflowService
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -29,7 +29,7 @@ def save_workflow(payload: WorkflowCreate, request: Request) -> Workflow:
 def get_workflow(workflow_id: UUID, request: Request) -> Workflow:
     try:
         return _service(request).get(workflow_id)
-    except WorkflowError as exc:
+    except WorkflowNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
 
 
@@ -37,5 +37,7 @@ def get_workflow(workflow_id: UUID, request: Request) -> Workflow:
 def rerun_workflow(workflow_id: UUID, payload: WorkflowRerunRequest, request: Request) -> WorkflowRun:
     try:
         return _service(request).rerun(workflow_id, payload.step_overrides)
-    except WorkflowError as exc:
+    except WorkflowNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except WorkflowError as exc:
+        raise HTTPException(422, str(exc)) from exc
