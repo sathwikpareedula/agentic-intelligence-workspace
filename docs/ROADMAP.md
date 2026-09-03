@@ -22,8 +22,11 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Implement bounded in-memory CSV and XLSX ingestion with validation and Excel sheet selection.
 - [x] Implement deterministic schema inspection, missing-value and duplicate analysis, and basic numeric and categorical profiles.
 - [x] Add API and service tests for supported formats, summaries, malformed inputs, empty data, sheet behavior, and upload limits.
-- [ ] Implement deterministic transformation, calculation, and broader validation behavior.
-- Add tests, evaluation cases, provenance, and artifact output for the milestone.
+- [x] Implement typed deterministic selection, filtering, sorting, renaming, deduplication, missing-value handling, restricted arithmetic derivation, grouping, aggregation, and joins.
+- [x] Add join diagnostics for unmatched rows, repeated-key multiplication, and suspicious many-to-many relationships.
+- [x] Add request-scoped CSV and XLSX artifact generation with safe filenames and output metadata.
+- [x] Add tests for transformation, aggregation, join diagnostics, validation failures, and artifact read-back.
+- [ ] Implement broader calculation, validation, provenance, and evaluation behavior.
 - Measure correctness, failure behavior, performance, and cost where applicable.
 
 ## LATER

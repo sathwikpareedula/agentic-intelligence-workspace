@@ -2,7 +2,7 @@
 
 ## Status
 
-Application code is not implemented yet. This document describes the intended V1 architecture conceptually and does not claim that any component, integration, or control exists.
+The implemented backend uses FastAPI and provides `GET /health` plus typed APIs for bounded CSV/XLSX ingestion, inspection, profiling, transformations, joins, aggregation, and in-memory CSV/XLSX artifact generation. These capabilities have pytest coverage. The remaining V1 architecture described below is conceptual and should not be read as implemented.
 
 The frontend will not be built first. Early work will establish deterministic data behavior, contracts, evidence handling, and evaluation before investing in a production interface.
 
@@ -22,7 +22,7 @@ PostgreSQL + pgvector / File storage
 Artifacts and trace
 ```
 
-All named technologies and components above are planned candidates for V1, not current dependencies or implemented services.
+FastAPI, deterministic structured-data services, and request-scoped tabular artifacts are implemented. The other named technologies and components above remain planned candidates for V1, not current dependencies or implemented services.
 
 ## Responsibilities
 
@@ -32,7 +32,7 @@ Provide a thin interaction layer for goals, user confirmations, progress, eviden
 
 ### API Layer
 
-FastAPI is the intended boundary for validated requests, authentication and authorization integration, job interaction, and artifact access. Its contracts will be defined when implementation begins.
+FastAPI is the implemented API boundary for health checks and typed CSV/XLSX inspection, profiling, transformation, join, and export requests. Authentication, authorization, job interaction, and persistent artifact access remain future work.
 
 ### Orchestrator
 
@@ -40,7 +40,7 @@ One orchestrator is preferred initially. It should understand intent, create a b
 
 ### Deterministic Data Tools
 
-Important calculations, transformations, joins, statistics, schema checks, and validations belong in deterministic tools. Their inputs and outputs should be typed, testable, and traceable. The LLM must not be the computation engine.
+Current deterministic services ingest CSV/XLSX data; inspect and profile datasets; and apply typed selection, filtering, sorting, renaming, deduplication, missing-value handling, restricted arithmetic derivation, grouping, aggregation, and joins. Join diagnostics surface unmatched rows and repeated-key multiplication. Broader calculations, schema checks, and validations remain future work. Inputs and outputs are typed and testable; an LLM is not the computation engine.
 
 ### Retrieval Tools
 
@@ -56,9 +56,8 @@ PostgreSQL and pgvector are intended future storage components for application r
 
 ### Artifacts and Trace
 
-The system should record inputs, tool calls, deterministic results, evidence references, decisions, user confirmations, errors, and produced artifacts sufficiently to support inspection and reproducibility. Sensitive data must not be logged indiscriminately.
+CSV and XLSX tabular artifacts are currently generated in memory with safe generated filenames and response metadata; no persistent artifact store exists. Future trace behavior should record inputs, tool calls, deterministic results, evidence references, decisions, user confirmations, errors, and produced artifacts sufficiently to support inspection and reproducibility. Sensitive data must not be logged indiscriminately.
 
 ## Cross-Cutting Requirements
 
 Security, authorization, provenance, observability, testing, evaluation, performance, and cost controls apply across all layers. Exact mechanisms remain to be designed and implemented.
-

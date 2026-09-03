@@ -1,0 +1,7 @@
+transaction_id,customer_id,amount,discount,status
+T001,C001,120.00,10.00,complete
+T002,C002,75.00,,complete
+T002,C002,75.00,,complete
+T003,C003,200.00,20.00,pending
+T004,C999,50.00,0.00,complete
+T005,C001,,5.00,cancelled
