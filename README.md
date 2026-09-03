@@ -33,7 +33,10 @@ For production-shaped retrieval, copy `.env.example` to `.env`, replace placehol
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.retrieval ..\evals\retrieval_cases.json
+.\.venv\Scripts\python.exe -m app.evaluation.product ..\evals\product_cases.json
 ```
+
+Both commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and the fixed August sales ground truth. It does not exercise hosted models, hosted embeddings, or a live database.
 
 ## Demonstrations
 

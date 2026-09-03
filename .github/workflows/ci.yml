@@ -16,6 +16,7 @@ jobs:
       - run: python -m pip install -e ".[test]"
       - run: python -m pytest -q
       - run: python -m app.evaluation.retrieval ../evals/retrieval_cases.json
+      - run: python -m app.evaluation.product ../evals/product_cases.json
   frontend:
     runs-on: ubuntu-latest
     defaults:
