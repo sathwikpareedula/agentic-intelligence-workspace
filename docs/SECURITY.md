@@ -1,0 +1,68 @@
+# Security Risks and Design Requirements
+
+## Status
+
+This is an early threat checklist. Every item below is a risk or design requirement, not a claim of an implemented control. Security decisions must be updated as architecture and code are introduced.
+
+## Threat Checklist
+
+### File Uploads
+
+- Risk: oversized, malformed, mislabeled, executable, or sensitive uploads may exhaust resources or cause unintended processing.
+- Design requirements: define size and type limits, validate content independently of filenames, isolate processing, handle archives safely, and establish retention and deletion rules.
+
+### Path Traversal
+
+- Risk: attacker-controlled filenames or paths may access or overwrite files outside an allowed workspace.
+- Design requirements: use server-generated identifiers, canonicalize paths, constrain access to explicit roots, and reject traversal and unsafe link behavior.
+
+### Generated SQL
+
+- Risk: model-generated SQL may expose, corrupt, or delete data or consume excessive resources.
+- Design requirements: avoid unrestricted execution; use typed query operations or validated constrained SQL, parameterization, least-privilege roles, read-only defaults, resource limits, and explicit confirmation for mutations.
+
+### Generated Python
+
+- Risk: arbitrary generated code may access secrets, files, networks, or host resources.
+- Design requirements: do not execute arbitrary LLM-generated Python unsafely; prefer fixed deterministic tools. Any future code execution requires strong isolation, resource limits, restricted capabilities, validation, and an explicit threat review.
+
+### Prompt Injection
+
+- Risk: uploaded documents or retrieved content may contain instructions designed to override system policy or trigger unsafe tool use.
+- Design requirements: treat source content as untrusted data, preserve instruction boundaries, constrain tools independently of prompts, require authorization checks, and evaluate direct and indirect injection attacks.
+
+### Secrets
+
+- Risk: credentials may enter source control, prompts, artifacts, telemetry, or logs.
+- Design requirements: use environment or managed secret storage, prevent secret logging, scope and rotate credentials, scan for accidental exposure, and document incident handling.
+
+### Cross-User Data Access
+
+- Risk: one user may retrieve another user's inputs, embeddings, traces, or artifacts.
+- Design requirements: define tenant boundaries, enforce isolation at every storage and retrieval layer, include negative authorization tests, and prevent cross-tenant cache leakage.
+
+### Authorization
+
+- Risk: authenticated users or services may perform actions beyond their roles or object permissions.
+- Design requirements: enforce authorization server-side for every resource and action, default deny, avoid trusting model decisions, and test privilege escalation paths.
+
+### Tool Permissions
+
+- Risk: an orchestrator may invoke overly powerful tools or exceed the scope of the user's request.
+- Design requirements: give tools narrow typed interfaces and least privilege, enforce policy outside the model, separate read and write capabilities, apply budgets, and confirm destructive or unexpectedly broad actions.
+
+### Malicious Documents
+
+- Risk: documents may exploit parsers, carry active content, conceal payloads, or poison retrieval results.
+- Design requirements: sandbox parsing, patch dependencies, disable active content, validate extraction, preserve provenance, scan where appropriate, and test adversarial documents.
+
+### Logging
+
+- Risk: logs and traces may leak personal data, document contents, secrets, or sensitive model/tool inputs.
+- Design requirements: define a data classification and redaction policy, minimize recorded content, control and audit access, set retention limits, and keep enough safe metadata for incident response and reproducibility.
+
+### Rate Limiting
+
+- Risk: abuse or accidental loops may create denial of service, excessive model cost, or downstream overload.
+- Design requirements: define per-user and per-tool limits, concurrency and resource budgets, timeouts, loop limits, backoff behavior, usage visibility, and safe failure modes.
+
