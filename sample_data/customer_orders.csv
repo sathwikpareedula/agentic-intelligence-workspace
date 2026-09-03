@@ -1,0 +1,6 @@
+order_id,customer_segment,amount,status
+1001,Enterprise,1250.50,complete
+1002,Small Business,250.00,pending
+1002,Small Business,250.00,pending
+1003,,875.25,complete
+1004,Enterprise,,cancelled

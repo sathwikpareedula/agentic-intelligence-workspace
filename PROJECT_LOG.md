@@ -4,7 +4,7 @@ This log records verified project progress. Planned work should not be presented
 
 ## Current Status
 
-Phase 0B: backend foundation verified in the canonical repository. The FastAPI application exposes a typed health endpoint, with local test and Uvicorn verification completed.
+Milestone 1A: deterministic structured-data ingestion and profiling foundation verified. The backend accepts bounded in-memory CSV and XLSX uploads for typed inspection and basic profiling.
 
 ## Milestone History
 
@@ -13,6 +13,9 @@ Phase 0B: backend foundation verified in the canonical repository. The FastAPI a
 - 2026-09-02: Added pytest coverage for the health endpoint and verified 1 passing test.
 - 2026-09-02: Successfully verified the backend locally with Uvicorn using the project Python virtual environment.
 - 2026-09-02: Configured backend runtime and test dependencies in `backend/pyproject.toml`.
+- 2026-09-02: Added deterministic CSV and XLSX ingestion with extension validation, clean parse errors, a 10 MiB upload limit, and optional Excel sheet selection.
+- 2026-09-02: Added typed `POST /datasets/inspect` and `POST /datasets/profile` APIs for dataset metadata, missing values, duplicates, numeric summaries, and categorical frequencies.
+- 2026-09-02: Verified the complete backend suite with 13 passing tests and manually verified the dataset and health APIs through local Uvicorn.
 
 ## Technologies Actually Used
 
@@ -23,6 +26,9 @@ Phase 0B: backend foundation verified in the canonical repository. The FastAPI a
 - Pydantic for the typed health response model.
 - Uvicorn for local ASGI application verification.
 - pytest and HTTPX for health endpoint testing.
+- pandas for deterministic tabular ingestion, inspection, and profiling.
+- openpyxl for read-only, data-only `.xlsx` workbook ingestion.
+- python-multipart for bounded FastAPI file-upload request parsing.
 
 Add technologies here only after they are actually used in the project.
 
@@ -40,7 +46,7 @@ None yet.
 
 ## Evaluation Results
 
-No evaluations have been run yet.
+- Backend test suite: 13 tests passed, covering health, CSV and XLSX ingestion, sheet behavior, inspection, profiling, malformed and unsupported inputs, empty datasets, and upload-size enforcement.
 
 ## Performance Results
 
@@ -49,7 +55,7 @@ No performance measurements have been run yet.
 ## Security Decisions
 
 - Security risks and design requirements are tracked from the engineering-foundation phase.
-- No security controls are claimed as implemented yet.
+- Dataset uploads are limited to 10 MiB, processed in memory without permanent persistence, restricted to `.csv` and `.xlsx`, and parsed without executing formulas, macros, or uploaded code.
 
 ## What I Learned
 

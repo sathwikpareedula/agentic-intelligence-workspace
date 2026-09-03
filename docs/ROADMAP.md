@@ -12,14 +12,17 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add a Pydantic `HealthResponse` and `GET /health` returning `{"status":"ok"}`.
 - [x] Add pytest health endpoint coverage and verify 1 passing test.
 - [x] Verify local Uvicorn startup using the project Python virtual environment.
-- [ ] Define success criteria for the first deterministic data milestone.
+- [x] Define and verify the bounded ingestion and profiling scope for the first deterministic data milestone.
 
 ## NEXT
 
 ### Milestone 1 — Deterministic data intelligence
 
-- Define a narrow structured-data workflow and typed contracts.
-- Implement deterministic ingestion, schema inspection, transformation, calculation, and validation behavior.
+- [x] Define typed contracts for deterministic CSV and XLSX inspection and profiling.
+- [x] Implement bounded in-memory CSV and XLSX ingestion with validation and Excel sheet selection.
+- [x] Implement deterministic schema inspection, missing-value and duplicate analysis, and basic numeric and categorical profiles.
+- [x] Add API and service tests for supported formats, summaries, malformed inputs, empty data, sheet behavior, and upload limits.
+- [ ] Implement deterministic transformation, calculation, and broader validation behavior.
 - Add tests, evaluation cases, provenance, and artifact output for the milestone.
 - Measure correctness, failure behavior, performance, and cost where applicable.
 
