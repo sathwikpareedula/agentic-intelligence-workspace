@@ -20,3 +20,8 @@ def get_health() -> HealthResponse:
 
     return HealthResponse(status="ok")
 
+
+@router.get("/ready", response_model=HealthResponse)
+def get_readiness() -> HealthResponse:
+    """Report process readiness; external providers are checked at operation time."""
+    return HealthResponse(status="ok")

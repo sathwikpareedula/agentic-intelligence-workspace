@@ -1,0 +1,62 @@
+{
+  "top_k": 2,
+  "documents": [
+    {
+      "document_id": "10000000-0000-0000-0000-000000000001",
+      "filename": "employee_handbook.pdf",
+      "chunks": [
+        {
+          "chunk_id": "11000000-0000-0000-0000-000000000001",
+          "page_number": 1,
+          "text": "Employees receive fifteen vacation days each year. Vacation requests must be submitted through the employee portal."
+        },
+        {
+          "chunk_id": "11000000-0000-0000-0000-000000000002",
+          "page_number": 2,
+          "text": "Remote work equipment must be returned when employment ends. Contact workplace operations for shipping instructions."
+        }
+      ]
+    },
+    {
+      "document_id": "20000000-0000-0000-0000-000000000002",
+      "filename": "expense_policy.pdf",
+      "chunks": [
+        {
+          "chunk_id": "22000000-0000-0000-0000-000000000001",
+          "page_number": 1,
+          "text": "Receipts are required for business expenses over twenty-five dollars. Submit receipts with the monthly expense report."
+        },
+        {
+          "chunk_id": "22000000-0000-0000-0000-000000000002",
+          "page_number": 2,
+          "text": "Air travel should use economy class unless a documented medical accommodation has been approved."
+        }
+      ]
+    },
+    {
+      "document_id": "30000000-0000-0000-0000-000000000003",
+      "filename": "security_guide.pdf",
+      "chunks": [
+        {
+          "chunk_id": "33000000-0000-0000-0000-000000000001",
+          "page_number": 3,
+          "text": "Report suspected phishing email immediately to the security team. Do not open unexpected attachments or links."
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "query": "How do employees submit vacation requests?",
+      "expected_chunk_id": "11000000-0000-0000-0000-000000000001"
+    },
+    {
+      "query": "When are receipts required for expenses?",
+      "expected_chunk_id": "22000000-0000-0000-0000-000000000001"
+    },
+    {
+      "query": "Where should a phishing email be reported?",
+      "expected_chunk_id": "33000000-0000-0000-0000-000000000001"
+    }
+  ]
+}
