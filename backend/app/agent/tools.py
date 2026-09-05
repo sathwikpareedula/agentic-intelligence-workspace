@@ -1,23 +1,28 @@
 """Strict typed tool registry and adapters for existing deterministic services."""
 
+from __future__ import annotations
+
 import base64
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent.models import AgentDatasetResource, ToolObservation
+from app.agent.models import AgentDatasetResource, AgentTaskResources, ToolObservation
 from app.models.retrieval import RetrievalRequest
 from app.models.grades import PolicyEvidence, RequiredFinalInput
-from app.models.transformations import JoinSpec, TransformRequest
+from app.models.transformations import JoinSpec, Transformation, TransformRequest
 from app.services.datasets import inspect_dataset, load_dataset, profile_dataset
 from app.services.retrieval import RetrievalService
 from app.services.grades import calculate_required_final
-from app.services.artifacts import InMemoryArtifactRepository
+from app.services.artifacts import ArtifactRepository, generate_artifact
 from app.services.sales_report import build_august_sales_report
 from app.services.transformations import apply_transformations, dataframe_result, join_datasets
+
+if TYPE_CHECKING:
+    from app.services.workflows import WorkflowService
 
 InputT = TypeVar("InputT", bound=BaseModel)
 
@@ -105,6 +110,44 @@ class BoundSalesReportInput(ToolInput):
     policy_evidence: list[PolicyEvidence] = Field(min_length=1, max_length=20)
 
 
+class ResourceListInput(ToolInput):
+    pass
+
+
+class BoundDatasetReferenceInput(ToolInput):
+    dataset: str = Field(min_length=1, max_length=255)
+
+
+class BoundDatasetTransformInput(BoundDatasetReferenceInput):
+    operations: list[Transformation] = Field(default_factory=list, max_length=30)
+
+
+class BoundDatasetJoinInput(ToolInput):
+    left_dataset: str = Field(min_length=1, max_length=255)
+    right_dataset: str = Field(min_length=1, max_length=255)
+    left_operations: list[Transformation] = Field(default_factory=list, max_length=30)
+    right_operations: list[Transformation] = Field(default_factory=list, max_length=30)
+    join: JoinSpec
+    operations: list[Transformation] = Field(default_factory=list, max_length=30)
+
+
+class BoundDatasetExportInput(BoundDatasetTransformInput):
+    format: Literal["csv", "xlsx"]
+
+
+class BoundDatasetJoinExportInput(BoundDatasetJoinInput):
+    format: Literal["csv", "xlsx"]
+
+
+class GeneralDocumentSearchInput(BoundDocumentSearchInput):
+    document_id: UUID | None = None
+
+
+class BoundWorkflowRunInput(ToolInput):
+    workflow_id: UUID
+    step_overrides: dict[Annotated[int, Field(ge=1)], dict[str, Any]] = Field(default_factory=dict)
+
+
 def dataset_tools() -> list[TypedTool[Any]]:
     def inspect(arguments: DatasetInput) -> ToolObservation:
         dataset = load_dataset(arguments.filename, arguments.content(), arguments.sheet)
@@ -126,6 +169,251 @@ def dataset_tools() -> list[TypedTool[Any]]:
         TypedTool("dataset.profile", "Profile deterministic numeric and categorical statistics.", DatasetInput, profile),
         TypedTool("dataset.transform", "Apply the closed set of validated dataframe operations.", TransformInput, transform),
     ]
+
+
+def general_task_tools(
+    service: RetrievalService | None,
+    resources: AgentTaskResources,
+    artifact_repository: ArtifactRepository,
+    workflow_service: WorkflowService | None = None,
+) -> list[TypedTool[Any]]:
+    """Build a general, task-scoped registry that never exposes uploaded bodies to the model."""
+
+    datasets = {resource.filename: resource for resource in resources.all_datasets()}
+    document_ids = resources.all_document_ids()
+    allowed_workflows = set(resources.workflow_ids)
+
+    def list_resources(_: ResourceListInput) -> ToolObservation:
+        return ToolObservation(
+            success=True,
+            summary=(
+                f"Listed {len(datasets)} datasets, {len(document_ids)} documents, "
+                f"and {len(allowed_workflows)} workflows bound to this task."
+            ),
+            result={
+                "datasets": list(datasets),
+                "document_ids": [str(item) for item in document_ids],
+                "workflow_ids": [str(item) for item in resources.workflow_ids],
+            },
+        )
+
+    tools: list[TypedTool[Any]] = [
+        TypedTool(
+            "resource.list",
+            "List the exact dataset filenames, document IDs, and workflow IDs authorized for this task. Call this before using a resource whose identifier is unknown.",
+            ResourceListInput,
+            list_resources,
+        )
+    ]
+
+    if datasets:
+        def inspect_bound(arguments: BoundDatasetReferenceInput) -> ToolObservation:
+            dataset = _load_bound_dataset(datasets, arguments.dataset)
+            result = inspect_dataset(dataset).model_dump(mode="json")
+            return ToolObservation(
+                success=True,
+                summary=f"Inspected {result['row_count']} rows and {result['column_count']} columns in {arguments.dataset}.",
+                result=result,
+            )
+
+        def profile_bound(arguments: BoundDatasetReferenceInput) -> ToolObservation:
+            dataset = _load_bound_dataset(datasets, arguments.dataset)
+            result = profile_dataset(dataset).model_dump(mode="json")
+            return ToolObservation(
+                success=True,
+                summary=f"Profiled {result['inspection']['row_count']} rows in {arguments.dataset}.",
+                result=result,
+            )
+
+        def transform_bound(arguments: BoundDatasetTransformInput) -> ToolObservation:
+            dataset = _load_bound_dataset(datasets, arguments.dataset)
+            frame = apply_transformations(dataset.frame, arguments.operations)
+            return ToolObservation(
+                success=True,
+                summary=f"Deterministic transformation produced {len(frame)} rows and {len(frame.columns)} columns.",
+                result=_bounded_dataframe_result(frame),
+            )
+
+        def join_bound(arguments: BoundDatasetJoinInput) -> ToolObservation:
+            frame, diagnostics = _join_bound_datasets(datasets, arguments)
+            return ToolObservation(
+                success=True,
+                summary=(
+                    f"Deterministic {diagnostics.join_type} join produced {len(frame)} rows; "
+                    f"{diagnostics.left_unmatched_rows} left and {diagnostics.right_unmatched_rows} right rows were unmatched."
+                ),
+                result={
+                    "result": _bounded_dataframe_result(frame),
+                    "diagnostics": diagnostics.model_dump(mode="json"),
+                },
+            )
+
+        def export_bound(arguments: BoundDatasetExportInput) -> ToolObservation:
+            dataset = _load_bound_dataset(datasets, arguments.dataset)
+            frame = apply_transformations(dataset.frame, arguments.operations)
+            artifact = generate_artifact(frame, dataset.filename, arguments.format)
+            artifact_repository.save(artifact)
+            return _artifact_observation(artifact, f"Exported {len(frame)} deterministic rows to {arguments.format.upper()}.")
+
+        def join_export_bound(arguments: BoundDatasetJoinExportInput) -> ToolObservation:
+            frame, diagnostics = _join_bound_datasets(datasets, arguments)
+            artifact = generate_artifact(frame, "joined_dataset", arguments.format)
+            artifact_repository.save(artifact)
+            observation = _artifact_observation(
+                artifact,
+                f"Exported {len(frame)} deterministically joined rows to {arguments.format.upper()}.",
+            )
+            result = observation.result or {}
+            result["join_diagnostics"] = diagnostics.model_dump(mode="json")
+            return observation.model_copy(update={"result": result})
+
+        tools.extend(
+            [
+                TypedTool(
+                    "dataset.inspect",
+                    "Inspect one bound CSV/XLSX dataset before choosing columns or operations. Requires a filename returned by resource.list.",
+                    BoundDatasetReferenceInput,
+                    inspect_bound,
+                ),
+                TypedTool(
+                    "dataset.profile",
+                    "Compute deterministic numeric and categorical profiles for one bound dataset.",
+                    BoundDatasetReferenceInput,
+                    profile_bound,
+                ),
+                TypedTool(
+                    "dataset.transform",
+                    "Apply validated deterministic filters, sorting, selection, renaming, deduplication, missing-value handling, arithmetic derivation, and group aggregation. Use group operations for numeric summaries; do not calculate in the model.",
+                    BoundDatasetTransformInput,
+                    transform_bound,
+                ),
+                TypedTool(
+                    "dataset.join",
+                    "Deterministically transform and join two bound datasets, return bounded result rows, and report unmatched rows and row-multiplication diagnostics.",
+                    BoundDatasetJoinInput,
+                    join_bound,
+                ),
+                TypedTool(
+                    "dataset.export",
+                    "Apply deterministic operations to a bound dataset and create a complete downloadable CSV or XLSX artifact.",
+                    BoundDatasetExportInput,
+                    export_bound,
+                ),
+                TypedTool(
+                    "dataset.join_export",
+                    "Deterministically transform and join two bound datasets and create a complete downloadable CSV or XLSX artifact with join diagnostics.",
+                    BoundDatasetJoinExportInput,
+                    join_export_bound,
+                ),
+            ]
+        )
+
+    if document_ids:
+        if service is None:
+            raise ValueError("A retrieval service is required when documents are bound to a task.")
+
+        def search_bound(arguments: GeneralDocumentSearchInput) -> ToolObservation:
+            selected_ids = [arguments.document_id] if arguments.document_id is not None else document_ids
+            if any(document_id not in document_ids for document_id in selected_ids):
+                raise ValueError("The requested document is not bound to this task.")
+            hits = []
+            for document_id in selected_ids:
+                response = service.search(arguments.query, arguments.top_k, document_id)
+                hits.extend(response.hits)
+            hits.sort(key=lambda hit: (-hit.score, str(hit.source.chunk_id)))
+            ranked = [hit.model_copy(update={"rank": index}) for index, hit in enumerate(hits[:arguments.top_k], 1)]
+            return ToolObservation(
+                success=True,
+                summary=f"Retrieved {len(ranked)} grounded evidence chunks from bound documents.",
+                result={"query": arguments.query, "hits": [hit.model_dump(mode="json") for hit in ranked]},
+                source_ids=[str(hit.source.chunk_id) for hit in ranked],
+            )
+
+        tools.append(
+            TypedTool(
+                "document.search",
+                "Search only the documents bound to this task and return text plus document/page/chunk provenance. Omit document_id to rank evidence across all bound documents.",
+                GeneralDocumentSearchInput,
+                search_bound,
+            )
+        )
+
+    if allowed_workflows and workflow_service is not None:
+        def run_workflow(arguments: BoundWorkflowRunInput) -> ToolObservation:
+            if arguments.workflow_id not in allowed_workflows:
+                raise ValueError("The requested workflow is not bound to this task.")
+            run = workflow_service.rerun(arguments.workflow_id, arguments.step_overrides)
+            return ToolObservation(
+                success=run.status == "completed",
+                summary=(
+                    f"Workflow {run.workflow_id} version {run.version} completed."
+                    if run.status == "completed"
+                    else f"Workflow failed at step {run.failed_step}: {run.error}"
+                ),
+                result=run.model_dump(mode="json"),
+                error_code=None if run.status == "completed" else "workflow_failed",
+                artifact_ids=[
+                    artifact_id
+                    for observation in run.observations
+                    for artifact_id in observation.artifact_ids
+                ],
+                source_ids=[
+                    source_id
+                    for observation in run.observations
+                    for source_id in observation.source_ids
+                ],
+            )
+
+        tools.append(
+            TypedTool(
+                "workflow.run",
+                "Rerun an authorized saved deterministic workflow with typed per-step overrides and schema-drift checks.",
+                BoundWorkflowRunInput,
+                run_workflow,
+            )
+        )
+
+    return tools
+
+
+def _load_bound_dataset(resources: dict[str, AgentDatasetResource], filename: str):
+    resource = resources.get(filename)
+    if resource is None:
+        raise ValueError(f"Dataset '{filename}' is not bound to this task.")
+    return load_dataset(resource.filename, resource.content(), resource.sheet)
+
+
+def _join_bound_datasets(resources: dict[str, AgentDatasetResource], arguments: BoundDatasetJoinInput):
+    left = _load_bound_dataset(resources, arguments.left_dataset)
+    right = _load_bound_dataset(resources, arguments.right_dataset)
+    left_frame = apply_transformations(left.frame, arguments.left_operations)
+    right_frame = apply_transformations(right.frame, arguments.right_operations)
+    joined = join_datasets(left_frame, right_frame, arguments.join)
+    return apply_transformations(joined.frame, arguments.operations), joined.diagnostics
+
+
+def _bounded_dataframe_result(frame, max_rows: int = 200) -> dict[str, Any]:
+    result = dataframe_result(frame.head(max_rows)).model_dump(mode="json")
+    result["row_count"] = len(frame)
+    result["rows_truncated"] = len(frame) > max_rows
+    return result
+
+
+def _artifact_observation(artifact, summary: str) -> ToolObservation:
+    reference = {
+        "artifact_id": str(artifact.artifact_id),
+        "filename": artifact.filename,
+        "media_type": artifact.media_type,
+        "row_count": artifact.row_count,
+        "column_count": artifact.column_count,
+        "download_url": f"/artifacts/{artifact.artifact_id}",
+    }
+    return ToolObservation(
+        success=True,
+        summary=summary,
+        result={"artifact": reference},
+        artifact_ids=[str(artifact.artifact_id)],
+    )
 
 
 def retrieval_tool(service: RetrievalService) -> TypedTool[RetrievalRequest]:
@@ -216,7 +504,7 @@ def grade_task_tools(
     ]
 
 
-def sales_report_tool(artifact_repository: InMemoryArtifactRepository | None = None) -> TypedTool[SalesReportInput]:
+def sales_report_tool(artifact_repository: ArtifactRepository | None = None) -> TypedTool[SalesReportInput]:
     def report(arguments: SalesReportInput) -> ToolObservation:
         transactions = load_dataset(arguments.transactions.filename, arguments.transactions.content(), arguments.transactions.sheet)
         customers = load_dataset(arguments.customers.filename, arguments.customers.content(), arguments.customers.sheet)
@@ -238,7 +526,7 @@ def sales_task_tools(
     customers_resource: AgentDatasetResource,
     targets_resource: AgentDatasetResource,
     document_id: UUID,
-    artifact_repository: InMemoryArtifactRepository,
+    artifact_repository: ArtifactRepository,
 ) -> list[TypedTool[Any]]:
     """Build task-scoped sales tools without exposing uploaded file bodies to a model."""
 
@@ -279,7 +567,7 @@ def sales_task_tools(
     ]
 
 
-def _sales_observation(generated, artifact_repository: InMemoryArtifactRepository | None) -> ToolObservation:
+def _sales_observation(generated, artifact_repository: ArtifactRepository | None) -> ToolObservation:
     if artifact_repository is not None:
         artifact_repository.save(generated.artifact)
     result = {

@@ -9,6 +9,8 @@ class DeterministicEmbeddingProvider:
     """Token-hash vectors that verify plumbing without claiming semantic-model quality."""
 
     dimension = 2048
+    provider_name = "deterministic"
+    model_name = "token-hash-v1"
     stop_words = {"a", "an", "are", "be", "do", "for", "how", "is", "should", "the", "to", "when", "where"}
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:

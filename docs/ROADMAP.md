@@ -37,8 +37,10 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add PostgreSQL/pgvector document and chunk storage with exact cosine retrieval and document filtering.
 - [x] Add typed PDF ingestion and ranked evidence-search APIs with document/page/chunk citations.
 - [x] Add controlled retrieval evaluation with per-query rankings, Hit@K, and MRR.
+- [x] Add Alembic-managed production schema and PostgreSQL persistence for retrieval, workflows, artifacts, and execution provenance.
+- [x] Add an opt-in isolated PostgreSQL/pgvector integration test and CI service-container path.
 - [ ] Verify PostgreSQL/pgvector and hosted embeddings against live local infrastructure.
-- [ ] Add OCR, tenant isolation, retention, and production database migration/operations controls.
+- [ ] Add OCR, tenant isolation, retention, connection pooling, and mature production database operations controls.
 
 ## LATER
 
@@ -51,8 +53,10 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add artifact provenance, management XLSX generation, and the known-ground-truth August sales flow.
 - [x] Add a functional Next.js workspace foundation and local TypeScript verification.
 - [x] Add Docker definitions, service composition, CI, request IDs/logging, CORS, and readiness.
-- [ ] Wire and evaluate a production orchestrator provider.
-- [ ] Add durable workflow/artifact repositories and artifact download APIs.
+- [x] Wire a production OpenAI-compatible orchestrator provider with structured decisions, timeouts, retries, safe errors, and explicit runtime status.
+- [x] Add task-scoped generalized dataset, retrieval, join, aggregation, artifact, and workflow tools plus controlled offline agent evaluations.
+- [ ] Run broader quality/cost evaluation against configured hosted orchestrator models.
+- [x] Add durable production workflow repositories, artifact metadata/filesystem storage, and artifact download APIs.
 - [x] Complete frontend typecheck and production-build verification.
 - [ ] Complete browser interaction and accessibility verification.
 

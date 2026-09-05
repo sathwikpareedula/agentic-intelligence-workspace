@@ -4,14 +4,26 @@ from io import BytesIO
 import json
 
 import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from app.main import app
+from app.services.artifacts import InMemoryArtifactRepository
 
 client = TestClient(app)
 
 SALES = b"id,region,amount,cost\n1,North,100,40\n2,South,50,20\n2,South,50,20\n3,North,,30\n"
+
+
+@pytest.fixture(autouse=True)
+def artifact_repository():
+    previous = app.state.artifact_repository
+    app.state.artifact_repository = InMemoryArtifactRepository()
+    try:
+        yield
+    finally:
+        app.state.artifact_repository = previous
 
 
 def _transform(spec: dict, content: bytes = SALES):
@@ -257,6 +269,9 @@ def test_csv_export_has_metadata_and_can_be_read_back() -> None:
     assert response.headers["x-artifact-format"] == "csv"
     assert response.headers["x-artifact-row-count"] == "3"
     assert response.headers["x-artifact-column-count"] == "4"
+    downloaded = client.get(f"/artifacts/{response.headers['x-artifact-id']}")
+    assert downloaded.status_code == 200
+    assert downloaded.content == response.content
     frame = pd.read_csv(BytesIO(response.content))
     assert frame.shape == (3, 4)
 

@@ -47,6 +47,7 @@ Desktop.ini
 *.tmp
 *.temp
 .cache/
+/backend/var/
 
 
 *.tsbuildinfo

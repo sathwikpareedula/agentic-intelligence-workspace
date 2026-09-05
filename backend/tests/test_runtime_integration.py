@@ -5,7 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
-from openai import OpenAIError
+import httpx
+from openai import APITimeoutError, OpenAIError
 
 from app.agent.models import Complete, ModelDecisionEnvelope, ToolCall
 from app.agent.providers import OpenAIModelProvider
@@ -54,6 +55,28 @@ def test_settings_require_explicit_valid_mode(monkeypatch) -> None:
         raise AssertionError("An ambiguous runtime mode must fail configuration validation.")
 
 
+def test_orchestrator_settings_support_dedicated_key_and_credential_free_base_url(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "demo")
+    monkeypatch.setenv("ORCHESTRATOR_API_KEY", "dedicated-secret")
+    monkeypatch.setenv("ORCHESTRATOR_BASE_URL", "https://compatible.example/v1/")
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "compatible-model")
+
+    settings = Settings.from_env()
+
+    assert settings.orchestrator_api_key == "dedicated-secret"
+    assert settings.orchestrator_base_url == "https://compatible.example/v1"
+    assert settings.orchestrator_model == "compatible-model"
+
+    monkeypatch.setenv("ORCHESTRATOR_BASE_URL", "https://user:password@compatible.example/v1")
+    try:
+        Settings.from_env()
+    except ConfigurationError as exc:
+        assert "without embedded credentials" in str(exc)
+        assert "password" not in str(exc)
+    else:
+        raise AssertionError("Base URLs with embedded credentials must fail configuration validation.")
+
+
 def test_openai_provider_validates_structured_decisions_without_logging_credentials() -> None:
     responses = _Responses(ModelDecisionEnvelope(decision=ToolCall(tool="dataset.inspect", arguments={})))
     provider = OpenAIModelProvider(
@@ -70,7 +93,34 @@ def test_openai_provider_validates_structured_decisions_without_logging_credenti
     assert decision.tool == "dataset.inspect"
     assert responses.kwargs["model"] == "test-model"
     assert responses.kwargs["store"] is False
+    assert responses.kwargs["parallel_tool_calls"] is False
+    assert responses.kwargs["max_output_tokens"] == 3000
     assert "secret-not-sent-in-payload" not in responses.kwargs["input"]
+
+
+def test_openai_provider_configures_base_url_timeout_and_sdk_retries(monkeypatch) -> None:
+    captured = {}
+
+    def build_client(**kwargs):
+        captured.update(kwargs)
+        return _Client(_Responses(ModelDecisionEnvelope(decision=Complete(answer="Ready"))))
+
+    monkeypatch.setattr("app.agent.providers.OpenAI", build_client)
+    provider = OpenAIModelProvider(
+        "private-key",
+        "compatible-model",
+        [],
+        7.5,
+        3,
+        "https://compatible.example/v1",
+        2048,
+    )
+
+    assert provider.decide("Finish", []).answer == "Ready"
+    assert "api_key" in captured
+    assert captured["base_url"] == "https://compatible.example/v1"
+    assert captured["timeout"] == 7.5
+    assert captured["max_retries"] == 3
 
 
 def test_openai_provider_maps_provider_errors() -> None:
@@ -86,10 +136,79 @@ def test_openai_provider_maps_provider_errors() -> None:
     try:
         provider.decide("Inspect", [])
     except RuntimeError as exc:
-        assert str(exc) == "OpenAI orchestrator request failed."
+        assert str(exc) == "Orchestrator provider request failed."
+        assert exc.code == "provider_failure"
         assert "provider detail" not in str(exc)
     else:
         raise AssertionError("Provider errors must be mapped to a stable public-safe error.")
+
+
+def test_openai_provider_rejects_malformed_structured_output() -> None:
+    provider = OpenAIModelProvider(
+        "test-key",
+        "test-model",
+        [],
+        3.0,
+        0,
+        client=_Client(_Responses(result={"decision": {"type": "tool_call", "tool": "x", "arguments": [], "extra": True}})),
+    )
+
+    try:
+        provider.decide("Inspect", [])
+    except RuntimeError as exc:
+        assert exc.code == "malformed_response"
+        assert "malformed structured output" in str(exc)
+    else:
+        raise AssertionError("Malformed provider output must fail closed.")
+
+
+def test_openai_provider_maps_timeout_without_exposing_request_details() -> None:
+    timeout = APITimeoutError(httpx.Request("POST", "https://provider.invalid/v1/responses?token=secret"))
+    provider = OpenAIModelProvider(
+        "test-key",
+        "test-model",
+        [],
+        1.0,
+        0,
+        client=_Client(_Responses(error=timeout)),
+    )
+
+    try:
+        provider.decide("Inspect", [])
+    except RuntimeError as exc:
+        assert exc.code == "provider_timeout"
+        assert str(exc) == "Orchestrator provider timed out."
+        assert "secret" not in str(exc)
+    else:
+        raise AssertionError("Provider timeouts must be mapped to a stable public-safe error.")
+
+
+def test_runtime_reports_demo_configured_and_unavailable_provider_states(monkeypatch, tmp_path) -> None:
+    client = TestClient(app)
+
+    monkeypatch.setenv("APP_MODE", "demo")
+    _clear_runtime_caches()
+    assert client.get("/runtime").json()["orchestrator_status"] == "demo"
+
+    monkeypatch.setenv("APP_MODE", "production")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://configured.invalid/workspace")
+    monkeypatch.setenv("ARTIFACT_STORAGE_PATH", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "embedding-secret")
+    monkeypatch.setenv("ORCHESTRATOR_API_KEY", "orchestrator-secret")
+    monkeypatch.setenv("ORCHESTRATOR_PROVIDER", "openai")
+    _clear_runtime_caches()
+    configured = client.get("/runtime").json()
+    assert configured["status"] == "ready"
+    assert configured["orchestrator_status"] == "configured"
+    assert "secret" not in str(configured)
+
+    monkeypatch.delenv("ORCHESTRATOR_API_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY")
+    _clear_runtime_caches()
+    unavailable = client.get("/runtime").json()
+    assert unavailable["status"] == "not_ready"
+    assert unavailable["orchestrator_status"] == "unavailable"
+    _clear_runtime_caches()
 
 
 def test_demo_mode_grades_workflow_through_public_http_api(monkeypatch) -> None:

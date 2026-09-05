@@ -16,6 +16,14 @@ class OpenAIEmbeddingProvider:
     def dimension(self) -> int:
         return self._dimension
 
+    @property
+    def provider_name(self) -> str:
+        return "openai"
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if any(not text.strip() for text in texts):
             raise EmbeddingError("Cannot embed empty document text.")

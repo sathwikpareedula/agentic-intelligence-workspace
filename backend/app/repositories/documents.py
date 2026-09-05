@@ -18,6 +18,9 @@ class StoredDocument:
     document_id: UUID
     filename: str
     page_count: int
+    embedding_provider: str = "unknown"
+    embedding_model: str = "unknown"
+    embedding_dimensions: int = 0
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,8 @@ class InMemoryDocumentRepository:
         self.chunks: dict[UUID, StoredChunk] = {}
 
     def save_document(self, document: StoredDocument, chunks: list[StoredChunk]) -> None:
+        if any(chunk.document_id != document.document_id for chunk in chunks):
+            raise RepositoryError("Every chunk must belong to the document being saved.")
         self.documents[document.document_id] = document
         self.chunks = {key: value for key, value in self.chunks.items() if value.document_id != document.document_id}
         self.chunks.update({chunk.chunk_id: chunk for chunk in chunks})
@@ -91,54 +96,59 @@ class InMemoryDocumentRepository:
 class PostgresDocumentRepository:
     """PostgreSQL + pgvector repository using cosine similarity."""
 
-    def __init__(self, database_url: str, embedding_dimension: int) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        embedding_dimension: int,
+        embedding_provider: str = "openai",
+        embedding_model: str = "text-embedding-3-small",
+        connect_timeout_seconds: int = 3,
+    ) -> None:
         if embedding_dimension <= 0 or embedding_dimension > 16000:
             raise RepositoryError("pgvector embeddings must have between 1 and 16000 dimensions.")
         self._database_url = database_url
         self._dimension = embedding_dimension
-
-    def initialize(self) -> None:
-        try:
-            with psycopg.connect(self._database_url) as connection:
-                connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                register_vector(connection)
-                connection.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS documents (
-                        id uuid PRIMARY KEY,
-                        filename text NOT NULL,
-                        page_count integer NOT NULL CHECK (page_count > 0),
-                        created_at timestamptz NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-                connection.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS document_chunks (
-                        id uuid PRIMARY KEY,
-                        document_id uuid NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-                        page_number integer NOT NULL CHECK (page_number > 0),
-                        chunk_index integer NOT NULL CHECK (chunk_index >= 0),
-                        content text NOT NULL CHECK (content <> ''),
-                        embedding vector({self._dimension}) NOT NULL,
-                        UNIQUE (document_id, page_number, chunk_index)
-                    )
-                    """
-                )
-        except psycopg.Error as exc:
-            raise RepositoryError("Could not initialize PostgreSQL document storage.") from exc
+        self._embedding_provider = embedding_provider
+        self._embedding_model = embedding_model
+        self._connect_timeout_seconds = connect_timeout_seconds
 
     def save_document(self, document: StoredDocument, chunks: list[StoredChunk]) -> None:
+        if any(chunk.document_id != document.document_id for chunk in chunks):
+            raise RepositoryError("Every chunk must belong to the document being saved.")
+        if any(len(chunk.embedding) != self._dimension for chunk in chunks):
+            raise RepositoryError("Document embedding dimension does not match the configured repository dimension.")
+        provider = document.embedding_provider if document.embedding_provider != "unknown" else self._embedding_provider
+        model = document.embedding_model if document.embedding_model != "unknown" else self._embedding_model
+        dimensions = document.embedding_dimensions or self._dimension
+        if (provider, model, dimensions) != (
+            self._embedding_provider,
+            self._embedding_model,
+            self._dimension,
+        ):
+            raise RepositoryError("Document embedding metadata does not match the configured repository.")
         try:
             with self._connect() as connection:
                 connection.execute(
                     """
-                    INSERT INTO documents (id, filename, page_count)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO documents
+                        (id, filename, page_count, embedding_provider, embedding_model, embedding_dimensions)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE
-                    SET filename = EXCLUDED.filename, page_count = EXCLUDED.page_count
+                    SET filename = EXCLUDED.filename,
+                        page_count = EXCLUDED.page_count,
+                        embedding_provider = EXCLUDED.embedding_provider,
+                        embedding_model = EXCLUDED.embedding_model,
+                        embedding_dimensions = EXCLUDED.embedding_dimensions,
+                        updated_at = now()
                     """,
-                    (document.document_id, document.filename, document.page_count),
+                    (
+                        document.document_id,
+                        document.filename,
+                        document.page_count,
+                        provider,
+                        model,
+                        dimensions,
+                    ),
                 )
                 connection.execute("DELETE FROM document_chunks WHERE document_id = %s", (document.document_id,))
                 connection.executemany(
@@ -156,10 +166,12 @@ class PostgresDocumentRepository:
             raise RepositoryError("Could not store document chunks.") from exc
 
     def search(self, embedding: list[float], top_k: int, document_id: UUID | None = None) -> list[RepositorySearchHit]:
-        params: list[object] = [embedding]
-        where = ""
+        if len(embedding) != self._dimension:
+            raise RepositoryError("Query embedding dimension does not match the configured repository dimension.")
+        params: list[object] = [embedding, self._embedding_provider, self._embedding_model, self._dimension]
+        where = "WHERE d.embedding_provider = %s AND d.embedding_model = %s AND d.embedding_dimensions = %s"
         if document_id is not None:
-            where = "WHERE c.document_id = %s"
+            where += " AND c.document_id = %s"
             params.append(document_id)
         params.extend([embedding, top_k])
         try:
@@ -186,6 +198,12 @@ class PostgresDocumentRepository:
         ]
 
     def _connect(self):
-        connection = psycopg.connect(self._database_url)
-        register_vector(connection)
-        return connection
+        try:
+            connection = psycopg.connect(
+                self._database_url,
+                connect_timeout=self._connect_timeout_seconds,
+            )
+            register_vector(connection)
+            return connection
+        except psycopg.Error as exc:
+            raise RepositoryError("Could not connect to PostgreSQL document storage.") from exc

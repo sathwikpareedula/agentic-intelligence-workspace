@@ -20,17 +20,9 @@ from app.api.retrieval import router as retrieval_router
 from app.api.sales import router as sales_router
 from app.api.transformations import router as transformations_router
 from app.api.workflows import router as workflows_router
-from app.agent.tools import ToolRegistry, dataset_tools, sales_report_tool
-from app.services.artifacts import InMemoryArtifactRepository
-from app.services.workflows import InMemoryWorkflowRepository, WorkflowService
-
 app = FastAPI(title="Agentic Intelligence Workspace")
-artifact_repository = InMemoryArtifactRepository()
-app.state.artifact_repository = artifact_repository
-app.state.workflow_service = WorkflowService(
-    InMemoryWorkflowRepository(),
-    ToolRegistry([*dataset_tools(), sales_report_tool(artifact_repository)]),
-)
+app.state.artifact_repository = None
+app.state.workflow_service = None
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],

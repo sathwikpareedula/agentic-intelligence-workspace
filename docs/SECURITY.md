@@ -42,6 +42,9 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - Risk: credentials may enter source control, prompts, artifacts, telemetry, or logs.
 - Design requirements: use environment or managed secret storage, prevent secret logging, scope and rotate credentials, scan for accidental exposure, and document incident handling.
 - PostgreSQL credentials and the embedding-provider API key are read from environment variables and are not returned by API models or included in the example environment file as real values.
+- Orchestrator credentials are read from `ORCHESTRATOR_API_KEY` (with `OPENAI_API_KEY` as an explicit fallback). Base URLs with embedded credentials are rejected. Runtime diagnostics expose provider state and model name, never keys or credential-bearing URLs.
+- Hosted-provider exceptions, timeouts, malformed structured output, and connection failures map to stable error codes/messages without returning provider response bodies or request details.
+- Repository errors expose stable messages and do not include DSNs, database exception details, API keys, or hosted-provider response details. Alembic reads its connection URL from the environment.
 
 ### Cross-User Data Access
 
@@ -59,6 +62,7 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - Risk: an orchestrator may invoke overly powerful tools or exceed the scope of the user's request.
 - Design requirements: give tools narrow typed interfaces and least privilege, enforce policy outside the model, separate read and write capabilities, apply budgets, and confirm destructive or unexpectedly broad actions.
 - Implemented: strict Pydantic tool contracts, explicit unknown/invalid-tool observations, trace body redaction, bounded loops, and no arbitrary code/SQL/shell tool.
+- Production agent tools are created per task and accept only bound dataset filenames, document IDs, and workflow IDs. Uploaded dataset bodies remain server-side and are not placed in model prompts or traces.
 
 ### Malicious Documents
 
@@ -71,6 +75,15 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - Risk: logs and traces may leak personal data, document contents, secrets, or sensitive model/tool inputs.
 - Design requirements: define a data classification and redaction policy, minimize recorded content, control and audit access, set retention limits, and keep enough safe metadata for incident response and reproducibility.
 - Implemented: bounded request IDs and completion logs containing method, route, status, timing, and request ID rather than request bodies. Production redaction and retention policy remains pending.
+
+### Durable Persistence
+
+- All repository queries use psycopg parameter binding; no endpoint or model can submit SQL, table names, operators, or executable database expressions.
+- Schema changes are explicit Alembic revisions. API startup does not create or mutate production schema. Migration permissions should be separated from the least-privilege runtime role before deployment.
+- Retrieval joins chunk citations back to authoritative document rows and filters provider/model/dimension metadata, preventing filename drift and incompatible vector-space mixing. Document filtering is a bound UUID predicate.
+- Artifact paths are never derived from uploaded filenames. Bodies use server-generated UUID keys constrained to one resolved root, metadata is parameterized, and byte count plus SHA-256 are checked on read.
+- Execution records store typed tool traces, statuses, source/artifact references, and verification output. They do not store hidden model reasoning or chain-of-thought.
+- Current limitations: no tenant/owner column or authorization boundary, no retention/deletion policy, no encryption policy beyond the database/filesystem deployment, no database connection pool, and workflow recipes may contain submitted tool arguments. Production deployment remains blocked on those controls for sensitive multi-user data.
 
 ### Rate Limiting
 

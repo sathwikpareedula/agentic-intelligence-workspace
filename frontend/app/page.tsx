@@ -8,6 +8,8 @@ type Runtime = {
   storage: "postgresql" | "in_memory";
   embedding_provider: string;
   orchestrator_provider: string;
+  orchestrator_status: "demo" | "configured" | "unavailable";
+  orchestrator_model: string;
   limitations: string[];
 };
 type Citation = { document_id: string; filename: string; page_number: number; chunk_id: string };
@@ -156,7 +158,11 @@ export default function WorkspacePage() {
   const hasInputs = Boolean(dataset && document && (demo === "grades" || (customers && targets)));
   const canRun = Boolean(hasInputs && goal.trim() && runtime?.status === "ready" && !busy);
   const runtimeLabel = runtime
-    ? runtime.mode === "demo" ? "Deterministic demo mode" : "Production providers"
+    ? runtime.orchestrator_status === "demo"
+      ? "Demo provider"
+      : runtime.orchestrator_status === "configured"
+        ? "Real provider configured"
+        : "Provider unavailable"
     : runtimeError ? "Backend unavailable" : "Checking backend";
 
   return <main>

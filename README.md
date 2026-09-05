@@ -1,6 +1,6 @@
 # Agentic Intelligence Workspace
 
-> Under active development. The repository includes a tested FastAPI backend, bounded single-agent orchestration, evidence-bound mixed reasoning, verification, reusable workflows, management artifacts, and a functional Next.js workspace foundation.
+> Under active development. The repository includes a tested FastAPI backend, bounded single-agent orchestration, evidence-bound mixed reasoning, versioned workflows, durable production persistence adapters, management artifacts, and a functional Next.js workspace foundation.
 
 This project turns natural-language goals over structured data and unstructured documents into verified, reproducible workflows and useful artifacts. Calculations remain in deterministic typed tools. A model provider may select tools and explain results, but cannot execute arbitrary Python, SQL, or shell commands.
 
@@ -9,10 +9,15 @@ This project turns natural-language goals over structured data and unstructured 
 - CSV/XLSX inspection, profiling, transformations, joins, aggregations, derivations, and safe exports.
 - PDF extraction, deterministic chunking, provider/repository abstractions, ranked retrieval, and citations.
 - One bounded observe/replan orchestrator with strict arguments, redacted traces, explicit errors, and iteration limits.
+- Environment-configured OpenAI-compatible Responses provider with strict structured decisions, bounded output, timeouts, retries, safe provider errors, and optional base URL.
+- Task-scoped general tools for dataset inspection/profiling, transformations, joins, aggregations, artifact exports, grounded document retrieval, and authorized workflow reruns.
 - `grades.csv` + `syllabus.pdf` mixed reasoning with a deterministic required-final calculator.
 - Numeric/citation verification and versioned deterministic recipes with schema-drift checks.
 - Provenance-carrying management XLSX artifacts and a known-ground-truth August sales demonstration.
 - Next.js workspace UI for uploads, tasks, traces, evidence, verification, and artifact visibility.
+- Alembic-managed PostgreSQL schema for documents/chunks, workflow versions and runs, artifact metadata, and structured execution records.
+- Production pgvector exact-cosine retrieval with provider/model/dimension isolation and optional document filtering.
+- PostgreSQL-backed workflow metadata plus local-filesystem artifact bodies with hashes and PostgreSQL provenance metadata.
 
 ## Quick start
 
@@ -28,20 +33,45 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-For production-shaped retrieval, copy `.env.example` to `.env`, replace placeholders, and run `docker compose up`. The controlled offline evaluation requires neither PostgreSQL nor an API key:
+`APP_MODE=demo` is the zero-dependency path. It intentionally uses process-local repositories, deterministic token-hash embeddings, and the explicit bounded grades demonstration provider. It never silently calls a hosted model.
+
+For production mode, create a project-owned PostgreSQL database, configure `DATABASE_URL` without committing credentials, and apply migrations before starting the API:
+
+```powershell
+cd backend
+$env:DATABASE_URL = "postgresql://USER:PASSWORD@localhost:5432/agentic_intelligence"
+.\.venv\Scripts\alembic.exe upgrade head
+.\.venv\Scripts\alembic.exe current
+$env:APP_MODE = "production"
+$env:ORCHESTRATOR_PROVIDER = "openai"
+$env:ORCHESTRATOR_API_KEY = "..." # or use OPENAI_API_KEY
+$env:ORCHESTRATOR_MODEL = "gpt-6-astra"
+# Optional for a Responses-compatible endpoint:
+$env:ORCHESTRATOR_BASE_URL = "https://api.openai.com/v1"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+The initial migration enables pgvector and creates every production table. The database role used for migration must be permitted to create the `vector` extension; the runtime should use a least-privilege role in a real deployment. For each schema change, create a new revision with `alembic revision -m "description"`, implement both directions, review generated SQL, and apply `alembic upgrade head`. Never edit a revision after it has been deployed.
+
+Alternatively, copy `.env.example` to `.env`, replace placeholders, set `APP_MODE=production`, and run `docker compose up`. Compose has a one-shot migration service and persistent volumes for PostgreSQL and artifact bodies. The controlled offline evaluation requires neither PostgreSQL nor an API key:
 
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.retrieval ..\evals\retrieval_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.product ..\evals\product_cases.json
+.\.venv\Scripts\python.exe -m app.evaluation.agent ..\evals\agent_cases.json
 ```
 
-Both commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and the fixed August sales ground truth. It does not exercise hosted models, hosted embeddings, or a live database.
+All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and the fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database.
 
 ## Demonstrations
 
 `sample_data/grades.csv` and `sample_data/syllabus.pdf` exercise cited policy evidence plus deterministic weighted-grade calculation. The August sales files and `commission_policy.pdf` exercise cleaning, join diagnostics, targets, underperformance, deterministic commissions, verification, a management workbook, and a saved/rerunnable recipe. Tests contain the executable end-to-end paths and fixed expected outputs.
 
-## Current limitations
+## Verification boundaries and current limitations
 
-Offline tests use scripted model and embedding providers. The API intentionally returns 503 for agent tasks until a production orchestrator provider and application-scoped tools are configured. Workflow and artifact repositories are in-memory. OCR, authentication, tenant isolation, durable artifact storage, migrations, parser sandboxing, rate limiting, and deployed-cloud verification remain future work. Local Next.js typecheck and production build verification passed. Docker files exist but could not be run because Docker was unavailable in the implementation environment.
+Implemented and tested offline: repository behavior, migration shape/static SQL, runtime separation, readiness failures, demo workflows, deterministic evaluations, and frontend build checks. CI is configured to run an isolated PostgreSQL 17 + pgvector integration test, but that workflow was not executed from this local run.
+
+Implemented but not live-verified locally: PostgreSQL writes/reads, pgvector similarity execution, Alembic upgrade against a live server, hosted embeddings, and hosted orchestrator execution. PostgreSQL 17 is listening locally, but no `DATABASE_URL`, PostgreSQL environment credentials, `.env`, or pgpass entry was available; a single passwordless `psql` probe was rejected. No provider key was available for this milestone, and no password was guessed or authentication changed.
+
+Planned or still incomplete: OCR, authentication/authorization, tenant isolation, parser sandboxing/malware scanning, retention controls, connection pooling, object storage, production rate limiting, broad hosted-provider quality evaluation, and deployed-cloud verification. Local filesystem artifact storage is intentionally the current production body store; PostgreSQL stores only metadata, references, and integrity hashes.

@@ -29,7 +29,7 @@ V1 is intended to support a bounded workflow that:
 - produces useful downloadable artifacts and a trace; and
 - saves a workflow so it can be inspected and reproduced.
 
-This is intended scope, not implemented functionality.
+The current implementation covers this bounded scope with task-scoped typed tools, offline deterministic demonstrations, and an environment-configured production model adapter. Hosted-model quality, multi-user controls, and deployed operations still require separate validation.
 
 ## Non-Goals
 
@@ -58,9 +58,8 @@ The system must distinguish sourced facts, deterministic results, model interpre
 
 ## Initial Demo: `grades.csv` + `syllabus.pdf`
 
-The first planned demonstration will combine a grade table with syllabus policies. A user might ask who is at risk, how deterministic grade calculations apply, and which syllabus passages govern the interpretation. The workflow should eventually produce computed results, cited document evidence, stated assumptions, verification findings, and a useful artifact. No part of this demo is implemented yet.
+The implemented demonstration combines a grade table with syllabus policies. A user can ask how deterministic grade calculations apply and which syllabus passages govern the interpretation. The bounded workflow produces computed results, cited document evidence, explicit insufficiency/conflict states, verification findings, and a trace.
 
-## Future Demo: August Sales Recruiter
+## August Sales Operations Demo
 
-A later demonstration may help a sales recruiter analyze August pipeline or activity data alongside unstructured candidate, role, or process documents. Its exact question, dataset, privacy constraints, and success criteria must be defined before implementation. This is a future concept, not a current feature.
-
+The implemented August sales demonstration cleans transactions, joins customer regions and targets, calculates policy-grounded commissions deterministically, reports join diagnostics and underperformance, verifies claims, and produces a management workbook. It uses synthetic sample data and fixed ground truth; it is not evidence of production performance on customer data.

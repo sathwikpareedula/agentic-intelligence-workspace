@@ -2,10 +2,32 @@ services:
   backend:
     build: ./backend
     environment:
+      APP_MODE: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-agentic_intelligence}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-agentic_intelligence}
+      ARTIFACT_STORAGE_PATH: /app/var/artifacts
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ORCHESTRATOR_PROVIDER: ${ORCHESTRATOR_PROVIDER:-openai}
+      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:-}
+      ORCHESTRATOR_BASE_URL: ${ORCHESTRATOR_BASE_URL:-https://api.openai.com/v1}
+      ORCHESTRATOR_MODEL: ${ORCHESTRATOR_MODEL:-gpt-6-astra}
+      ORCHESTRATOR_TIMEOUT_SECONDS: ${ORCHESTRATOR_TIMEOUT_SECONDS:-30}
+      ORCHESTRATOR_MAX_RETRIES: ${ORCHESTRATOR_MAX_RETRIES:-2}
+      ORCHESTRATOR_MAX_OUTPUT_TOKENS: ${ORCHESTRATOR_MAX_OUTPUT_TOKENS:-3000}
     ports: ["8000:8000"]
+    volumes:
+      - artifact_data:/app/var/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agentic_intelligence}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-agentic_intelligence}
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,3 +57,4 @@ services:
 
 volumes:
   pgvector_data:
+  artifact_data:

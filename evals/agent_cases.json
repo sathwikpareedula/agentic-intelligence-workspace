@@ -1,0 +1,6 @@
+{
+  "aggregation_tool": "dataset.transform",
+  "join_tool": "dataset.join",
+  "iteration_limit": 3,
+  "insufficient_evidence_status": "insufficient_evidence"
+}

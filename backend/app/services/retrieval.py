@@ -24,7 +24,14 @@ class RetrievalService:
         embeddings = self._embedding_provider.embed_documents([chunk.text for chunk in chunks])
         validate_embeddings(embeddings, len(chunks), self._embedding_provider.dimension)
         self._repository.save_document(
-            StoredDocument(document_id=document.document_id, filename=document.filename, page_count=document.page_count),
+            StoredDocument(
+                document_id=document.document_id,
+                filename=document.filename,
+                page_count=document.page_count,
+                embedding_provider=self._embedding_provider.provider_name,
+                embedding_model=self._embedding_provider.model_name,
+                embedding_dimensions=self._embedding_provider.dimension,
+            ),
             [
                 StoredChunk(
                     chunk_id=chunk.chunk_id,

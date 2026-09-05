@@ -1,10 +1,11 @@
 """In-memory tabular artifact generation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
 import re
 from datetime import datetime, timezone
+from typing import Protocol
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -23,6 +24,8 @@ class GeneratedArtifact:
     created_at: datetime
     producing_task_id: UUID | None = None
     producing_workflow_id: UUID | None = None
+    producing_run_id: UUID | None = None
+    verification_status: str = "not_verified"
     provenance: dict[str, str] | None = None
 
 
@@ -168,6 +171,37 @@ class InMemoryArtifactRepository:
 
     def get(self, artifact_id: UUID) -> GeneratedArtifact | None:
         return self._artifacts.get(artifact_id)
+
+    def link_to_execution(self, artifact_ids: list[UUID], task_id: UUID, verification_status: str) -> None:
+        for artifact_id in artifact_ids:
+            artifact = self._artifacts.get(artifact_id)
+            if artifact is not None:
+                self._artifacts[artifact_id] = replace(
+                    artifact,
+                    producing_task_id=task_id,
+                    producing_run_id=task_id,
+                    verification_status=verification_status,
+                )
+
+    def link_to_workflow(self, artifact_ids: list[UUID], workflow_id: UUID, run_id: UUID) -> None:
+        for artifact_id in artifact_ids:
+            artifact = self._artifacts.get(artifact_id)
+            if artifact is not None:
+                self._artifacts[artifact_id] = replace(
+                    artifact,
+                    producing_workflow_id=workflow_id,
+                    producing_run_id=run_id,
+                )
+
+
+class ArtifactRepository(Protocol):
+    def save(self, artifact: GeneratedArtifact) -> None: ...
+
+    def get(self, artifact_id: UUID) -> GeneratedArtifact | None: ...
+
+    def link_to_execution(self, artifact_ids: list[UUID], task_id: UUID, verification_status: str) -> None: ...
+
+    def link_to_workflow(self, artifact_ids: list[UUID], workflow_id: UUID, run_id: UUID) -> None: ...
 
 
 def _sanitize_spreadsheet_strings(frame: pd.DataFrame) -> pd.DataFrame:

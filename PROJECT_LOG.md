@@ -4,7 +4,7 @@ This log records verified project progress. Planned work should not be presented
 
 ## Current Status
 
-Milestones 3-9 foundation: bounded execution, mixed reasoning, verification, workflows, artifacts, sales demo, frontend foundation, and productization implemented and verified where noted below.
+Bounded execution, mixed reasoning, verification, workflows, artifacts, sales demo, durable persistence, production provider integration, generalized task-scoped orchestration, and the frontend foundation are implemented and verified where noted below.
 
 ## Milestone History
 
@@ -29,6 +29,9 @@ Milestones 3-9 foundation: bounded execution, mixed reasoning, verification, wor
 - 2026-09-03: Added a Next.js workspace foundation; TypeScript and the optimized production build passed. Browser interaction verification remains pending.
 - 2026-09-03: Added Docker service composition, CI, request IDs/logging, CORS, and readiness behavior.
 - 2026-09-03: Upgraded the frontend to Next.js 16.3.4 after `npm audit` identified transitive PostCSS advisories; the repeat audit reported zero vulnerabilities and typecheck/build passed.
+- 2026-09-04: Added an environment-configured OpenAI-compatible Responses adapter with strict structured decisions, bounded output, SDK retries, timeouts, stable safe errors, and explicit demo/configured/unavailable runtime status.
+- 2026-09-04: Generalized the one orchestrator with task-scoped dataset, retrieval, join, aggregation, artifact-export, and saved-workflow tools while keeping deterministic services responsible for data and numeric work.
+- 2026-09-04: Added controlled generalized-agent evaluation and tests for malformed provider output, timeout/failure mapping, invalid arguments, replanning, iteration limits, mixed structured/unstructured tasks, artifacts, workflows, and insufficient evidence.
 
 ## Technologies Actually Used
 
@@ -44,7 +47,7 @@ Milestones 3-9 foundation: bounded execution, mixed reasoning, verification, wor
 - python-multipart for bounded FastAPI file-upload request parsing.
 - pypdf for non-executing PDF text extraction.
 - psycopg and pgvector for the production-intended PostgreSQL vector repository.
-- OpenAI SDK for the configured hosted embedding-provider implementation.
+- OpenAI SDK for configured hosted embedding and Responses-based orchestration providers.
 
 Add technologies here only after they are actually used in the project.
 
@@ -55,6 +58,7 @@ Add technologies here only after they are actually used in the project.
 - Defer implementation technology adoption until its milestone requires it.
 - Defer DuckDB and SQL execution because the current typed pandas operations satisfy the bounded analytics scope without introducing another query and security boundary.
 - Use PostgreSQL with pgvector as the retrieval store, exact cosine search initially, and interfaces for both vector storage and embedding providers.
+- Use one task-scoped orchestrator with strictly structured provider decisions; do not expose uploaded bodies or add arbitrary execution to gain generality.
 
 Material decisions should receive a record under `docs/decisions/`.
 
@@ -64,9 +68,11 @@ Material decisions should receive a record under `docs/decisions/`.
 
 ## Evaluation Results
 
-- Backend test suite: 67 tests passed across structured data, retrieval, orchestration, mixed reasoning, verification, workflows, artifacts, sales evaluation, and API behavior.
-- Controlled offline retrieval evaluation: 3 queries at `top_k=2`, Hit@2 = 1.0 and mean reciprocal rank = 1.0. This measures the fixed token-hash test corpus, not hosted embedding quality or production recall.
-- Frontend verification: TypeScript passed, Next.js 16.3.4 optimized production build passed, and `npm audit` reported zero vulnerabilities.
+- Backend test suite: 99 tests passed, 1 opt-in live PostgreSQL integration test skipped, and 2 framework deprecation warnings were reported.
+- Controlled offline retrieval evaluation: 5 queries at `top_k=2`, Hit@2 = 1.0 and mean reciprocal rank = 1.0. This measures the fixed token-hash test corpus, not hosted embedding quality or production recall.
+- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Neither evaluation measures hosted-model quality, latency, or cost.
+- Frontend verification: TypeScript passed, the Next.js 16.3.4 optimized production build passed, and a normal `npm audit` after an up-to-date `npm install` reported zero vulnerabilities without changing `package.json` or `package-lock.json`.
+- No real orchestrator request was run because neither `ORCHESTRATOR_API_KEY` nor `OPENAI_API_KEY` was available.
 - Docker configuration was added but could not be executed or validated because Docker is unavailable in this environment.
 - Browser interaction QA could not run because no controllable browser was available; this remains explicitly pending despite successful frontend build verification.
 
@@ -83,6 +89,7 @@ No performance measurements have been run yet.
 - Formula-like text is neutralized during CSV/XLSX export to prevent uploaded strings from becoming active spreadsheet formulas.
 - PDF content is bounded and treated as untrusted evidence data; it is never executed or treated as system instructions.
 - Retrieval credentials come from environment variables; API responses preserve document/page/chunk provenance and never fabricate citations.
+- Orchestrator keys, model, base URL, timeout, retry count, and output bound come from environment configuration. Credential-bearing base URLs are rejected, file bodies and secret-like arguments are redacted, and provider failures expose only stable safe messages.
 
 ## What I Learned
 

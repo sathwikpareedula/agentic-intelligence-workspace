@@ -31,7 +31,9 @@ def test_runtime_diagnostics_do_not_expose_secrets() -> None:
     assert response.status_code == 200
     assert response.json()["storage"] == "postgresql"
     assert set(response.json()) == {
-        "status", "mode", "storage", "embedding_provider", "orchestrator_provider", "limitations"
+        "status", "mode", "storage", "embedding_provider", "orchestrator_provider",
+        "orchestrator_status", "orchestrator_model", "database", "pgvector",
+        "migrations", "artifact_storage", "limitations"
     }
 
 

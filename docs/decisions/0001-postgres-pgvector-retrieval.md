@@ -18,7 +18,7 @@ PostgreSQL keeps vector evidence and relational provenance in one transactional 
 ## Tradeoffs
 
 - PostgreSQL and hosted embeddings add operational setup, secrets, latency, and cost.
-- The current schema initialization is application-managed and lacks a migration framework.
+- Alembic now manages the schema; the later durable-persistence decision is recorded in ADR 0003.
 - Exact search will require performance evaluation as the chunk corpus grows.
 - The deterministic evaluation provider validates ranking mechanics, not semantic model quality.
 - Live PostgreSQL/pgvector and OpenAI integration were not available for verification in the implementation environment.

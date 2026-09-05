@@ -65,11 +65,10 @@ def test_postgres_repository_schema_storage_and_cosine_search(monkeypatch) -> No
             batches.append((sql, list(params)))
 
     connection = FakeConnection()
-    monkeypatch.setattr("app.repositories.documents.psycopg.connect", lambda _: connection)
+    monkeypatch.setattr("app.repositories.documents.psycopg.connect", lambda *args, **kwargs: connection)
     monkeypatch.setattr("app.repositories.documents.register_vector", lambda _: None)
     repository = PostgresDocumentRepository("postgresql://unused", 3)
 
-    repository.initialize()
     repository.save_document(
         StoredDocument(document_id, "policy.pdf", 2),
         [StoredChunk(chunk_id, document_id, "policy.pdf", 2, 0, "Evidence text", [1.0, 0.0, 0.0])],
@@ -77,10 +76,9 @@ def test_postgres_repository_schema_storage_and_cosine_search(monkeypatch) -> No
     hits = repository.search([1.0, 0.0, 0.0], 1, document_id)
 
     sql = "\n".join(statement for statement, _ in executed)
-    assert "CREATE EXTENSION IF NOT EXISTS vector" in sql
-    assert "embedding vector(3)" in sql
+    assert "CREATE TABLE" not in sql
     assert "1 - (c.embedding <=> %s) AS score" in sql
-    assert "WHERE c.document_id = %s" in sql
+    assert "d.embedding_dimensions = %s AND c.document_id = %s" in sql
     assert len(batches[0][1]) == 1
     assert hits[0].chunk_id == chunk_id
     assert hits[0].filename == "policy.pdf"

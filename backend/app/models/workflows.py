@@ -1,7 +1,7 @@
 """Versioned deterministic workflow recipe contracts."""
 
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,9 +36,12 @@ class WorkflowRerunRequest(StrictModel):
 
 
 class WorkflowRun(StrictModel):
+    run_id: UUID = Field(default_factory=uuid4)
     workflow_id: UUID
     version: int
-    status: str
+    status: Literal["completed", "failed"]
     observations: list[ToolObservation]
     failed_step: int | None = None
     error: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

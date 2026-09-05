@@ -96,11 +96,26 @@ def test_existing_dataset_capability_is_wrapped_without_file_body_in_trace() -> 
     assert result.status == "completed"
 
 
+def test_invalid_arguments_redact_secret_like_fields_and_input_values() -> None:
+    provider = FakeModelProvider(
+        [
+            ToolCall(tool="number.read", arguments={"value": -1, "api_key": "do-not-expose"}),
+            Complete(answer="Stopped safely"),
+        ]
+    )
+
+    result = AgentOrchestrator(provider, ToolRegistry([_number_tool()])).execute("Validate")
+
+    assert result.trace[0].validated_arguments is None
+    assert "do-not-expose" not in result.trace[0].observation
+    assert result.status == "completed"
+
+
 def test_agent_api_boundary_and_validation() -> None:
     client = TestClient(app)
     unavailable = client.post("/agent/tasks", json={"goal": "Do work"})
     invalid = client.post("/agent/tasks", json={"goal": "", "max_iterations": 0})
-    assert unavailable.status_code == 503
+    assert unavailable.status_code == 422
     assert invalid.status_code == 422
 
     app.state.agent_orchestrator = AgentOrchestrator(FakeModelProvider([Complete(answer="Finished")]), ToolRegistry())

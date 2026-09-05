@@ -1,10 +1,12 @@
 """Deterministic dataset transformation, join, and export endpoints."""
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
 from pydantic import ValidationError
 
 from app.api.datasets import _read_upload
+from app.config import Settings, get_settings
+from app.dependencies import get_artifact_repository
 from app.models.transformations import (
     DatasetResult,
     ExportRequest,
@@ -13,7 +15,8 @@ from app.models.transformations import (
     JoinWorkflowRequest,
     TransformRequest,
 )
-from app.services.artifacts import GeneratedArtifact, generate_artifact
+from app.repositories.documents import RepositoryError
+from app.services.artifacts import ArtifactRepository, GeneratedArtifact, generate_artifact
 from app.services.transformations import (
     TransformationError,
     apply_transformations,
@@ -48,6 +51,7 @@ def _artifact_response(artifact: GeneratedArtifact) -> Response:
             "X-Artifact-Format": artifact.format,
             "X-Artifact-Row-Count": str(artifact.row_count),
             "X-Artifact-Column-Count": str(artifact.column_count),
+            "X-Artifact-Id": str(artifact.artifact_id),
         },
     )
 
@@ -93,9 +97,11 @@ async def join_uploaded_datasets(
 
 @router.post("/export")
 async def export_dataset(
+    http_request: Request,
     file: UploadFile = File(...),
     request: str = Form(...),
     sheet: str | None = Form(default=None),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     spec = _parse_request(request, ExportRequest)
     dataset = await _read_upload(file, sheet)
@@ -103,16 +109,20 @@ async def export_dataset(
         result = apply_transformations(dataset.frame, spec.operations)
     except TransformationError as exc:
         raise _operation_error(exc) from exc
-    return _artifact_response(generate_artifact(result, dataset.filename, spec.format))
+    artifact = generate_artifact(result, dataset.filename, spec.format)
+    _persist_artifact(artifact, http_request, settings)
+    return _artifact_response(artifact)
 
 
 @router.post("/join/export")
 async def export_joined_datasets(
+    http_request: Request,
     left_file: UploadFile = File(...),
     right_file: UploadFile = File(...),
     request: str = Form(...),
     left_sheet: str | None = Form(default=None),
     right_sheet: str | None = Form(default=None),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     spec = _parse_request(request, JoinExportRequest)
     try:
@@ -128,4 +138,15 @@ async def export_joined_datasets(
         result = apply_transformations(joined.frame, spec.operations)
     except TransformationError as exc:
         raise _operation_error(exc) from exc
-    return _artifact_response(generate_artifact(result, "joined_dataset", spec.format))
+    artifact = generate_artifact(result, "joined_dataset", spec.format)
+    _persist_artifact(artifact, http_request, settings)
+    return _artifact_response(artifact)
+
+
+def _persist_artifact(artifact: GeneratedArtifact, request: Request, settings: Settings) -> None:
+    repository: ArtifactRepository | None = getattr(request.app.state, "artifact_repository", None)
+    repository = repository or get_artifact_repository(settings)
+    try:
+        repository.save(artifact)
+    except RepositoryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

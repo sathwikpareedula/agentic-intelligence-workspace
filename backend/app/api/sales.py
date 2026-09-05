@@ -11,10 +11,11 @@ from app.agent.providers import DeterministicSalesDemoProvider, OpenAIModelProvi
 from app.agent.tools import ToolRegistry, sales_task_tools
 from app.agent.verification import EvidenceVerifier
 from app.config import Settings, get_settings
-from app.dependencies import build_retrieval_service
+from app.dependencies import build_retrieval_service, get_artifact_repository, get_execution_repository
 from app.embeddings.base import EmbeddingError
 from app.repositories.documents import RepositoryError
-from app.services.artifacts import InMemoryArtifactRepository
+from app.services.artifacts import ArtifactRepository
+from app.services.executions import persist_execution
 from app.services.datasets import MAX_UPLOAD_BYTES
 from app.services.pdf_documents import (
     NoExtractableTextError,
@@ -75,9 +76,8 @@ async def prepare_august_report(
             content_base64=base64.b64encode(upload[1]).decode("ascii"),
         )
 
-    repository: InMemoryArtifactRepository | None = getattr(request.app.state, "artifact_repository", None)
-    if repository is None:
-        raise HTTPException(status_code=503, detail="Artifact storage is not configured.")
+    repository: ArtifactRepository | None = getattr(request.app.state, "artifact_repository", None)
+    repository = repository or get_artifact_repository(settings)
     registry = ToolRegistry(
         sales_task_tools(
             retrieval_service,
@@ -101,4 +101,9 @@ async def prepare_august_report(
             settings.orchestrator_max_retries,
         )
     orchestrator = AgentOrchestrator(provider, registry, EvidenceVerifier())
-    return await run_in_threadpool(orchestrator.execute, goal, 8)
+    execution = await run_in_threadpool(orchestrator.execute, goal, 8)
+    try:
+        persist_execution(execution, get_execution_repository(settings), repository)
+    except RepositoryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return execution
