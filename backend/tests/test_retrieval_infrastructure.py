@@ -3,6 +3,7 @@
 from uuid import UUID
 
 import pytest
+from pgvector import Vector
 
 from app.config import ConfigurationError, Settings
 from app.repositories.documents import PostgresDocumentRepository, RepositoryError, StoredChunk, StoredDocument
@@ -45,6 +46,15 @@ def test_postgres_repository_schema_storage_and_cosine_search(monkeypatch) -> No
         def __init__(self, rows=None):
             self._rows = rows or []
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def executemany(self, sql, params):
+            batches.append((sql, list(params)))
+
         def fetchall(self):
             return self._rows
 
@@ -61,8 +71,8 @@ def test_postgres_repository_schema_storage_and_cosine_search(monkeypatch) -> No
                 return FakeCursor([(chunk_id, document_id, "policy.pdf", 2, "Evidence text", 0.875)])
             return FakeCursor()
 
-        def executemany(self, sql, params):
-            batches.append((sql, list(params)))
+        def cursor(self):
+            return FakeCursor()
 
     connection = FakeConnection()
     monkeypatch.setattr("app.repositories.documents.psycopg.connect", lambda *args, **kwargs: connection)
@@ -80,6 +90,10 @@ def test_postgres_repository_schema_storage_and_cosine_search(monkeypatch) -> No
     assert "1 - (c.embedding <=> %s) AS score" in sql
     assert "d.embedding_dimensions = %s AND c.document_id = %s" in sql
     assert len(batches[0][1]) == 1
+    assert isinstance(batches[0][1][0][-1], Vector)
+    search_params = next(params for sql, params in executed if "SELECT c.id" in sql)
+    assert isinstance(search_params[0], Vector)
+    assert isinstance(search_params[-2], Vector)
     assert hits[0].chunk_id == chunk_id
     assert hits[0].filename == "policy.pdf"
     assert hits[0].page_number == 2
