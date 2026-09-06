@@ -57,6 +57,8 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add task-scoped generalized dataset, retrieval, join, aggregation, artifact, and workflow tools plus controlled offline agent evaluations.
 - [ ] Run broader quality/cost evaluation against configured hosted orchestrator models.
 - [x] Add durable production workflow repositories, artifact metadata/filesystem storage, and artifact download APIs.
+- [x] Turn August sales into the recruiter-facing north-star with schema discovery, policy-bound commissions, named-fact verification, join warnings/failures, a polished six-sheet workbook, structured execution stages, and schema-checked reruns.
+- [x] Add a dedicated controlled north-star evaluation covering outputs, evidence, failures, artifacts, and reproducibility.
 - [x] Complete frontend typecheck and production-build verification.
 - [ ] Complete browser interaction and accessibility verification.
 

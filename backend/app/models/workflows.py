@@ -17,6 +17,7 @@ class WorkflowStep(StrictModel):
     tool: str = Field(min_length=1, max_length=100)
     arguments: dict[str, Any]
     expected_columns: list[str] | None = None
+    expected_schemas: dict[str, list[str]] | None = None
 
 
 class WorkflowCreate(StrictModel):

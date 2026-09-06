@@ -18,6 +18,7 @@ This project turns natural-language goals over structured data and unstructured 
 - Alembic-managed PostgreSQL schema for documents/chunks, workflow versions and runs, artifact metadata, and structured execution records.
 - Production pgvector exact-cosine retrieval with provider/model/dimension isolation and optional document filtering.
 - PostgreSQL-backed workflow metadata plus local-filesystem artifact bodies with hashes and PostgreSQL provenance metadata.
+- A recruiter-focused August sales workflow that discovers the three uploaded table roles from inspected schemas, retrieves commission evidence, runs deterministic cleaning/joins/analysis/commissions, verifies named facts, generates a six-sheet workbook with three charts, and saves a schema-checked recipe.
 
 ## Quick start
 
@@ -60,13 +61,29 @@ cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.retrieval ..\evals\retrieval_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.product ..\evals\product_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.agent ..\evals\agent_cases.json
+.\.venv\Scripts\python.exe -m app.evaluation.north_star ..\evals\north_star_cases.json
 ```
 
-All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and the fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database.
+All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database.
 
 ## Demonstrations
 
 `sample_data/grades.csv` and `sample_data/syllabus.pdf` exercise cited policy evidence plus deterministic weighted-grade calculation. The August sales files and `commission_policy.pdf` exercise cleaning, join diagnostics, targets, underperformance, deterministic commissions, verification, a management workbook, and a saved/rerunnable recipe. Tests contain the executable end-to-end paths and fixed expected outputs.
+
+### Recruiter north-star: August sales management report
+
+In the browser, choose **August sales report**, enter the goal, and upload:
+
+- `sample_data/august_transactions.csv` as transactions;
+- `sample_data/sales_customers.csv` as customers;
+- `sample_data/sales_targets.csv` as targets; and
+- `sample_data/commission_policy.pdf` as policy evidence.
+
+The bounded orchestrator lists and inspects the authorized resources, identifies their roles from required columns rather than filenames, retrieves the commission rule with page/chunk provenance, and invokes `sales.north_star_report`. Deterministic code preserves the source frames, handles safe cleaning, rejects ambiguous duplicates and policy rules, reports join losses, computes every total/variance/commission, and emits named verification facts.
+
+The downloadable workbook contains **Executive Summary**, **Regional Performance**, **Salesperson Performance**, **Cleaned Transactions**, **Data Quality**, and **Provenance & Sources** sheets plus actual-vs-target, shortfall, and commission charts. The UI shows a user-facing Goal → Plan → Inspect → Retrieve → Clean → Join → Analyze → Calculate commissions → Generate workbook → Verify → Complete trace, citations, warnings, verification findings, and the saved recipe version. Reruns accept compatible replacement resources and fail on material schema drift.
+
+The controlled fixture currently yields total net sales `2350.00`, total commission `117.50`, North net sales `1350.00`, and a North shortfall of `650.00`; Alice's cited-policy commission is `67.50`. An unmatched customer remains visible under `Unassigned`, and that missing customer/target relationship is reported as a warning rather than hidden. These are synthetic deterministic results, not hosted-model quality evidence.
 
 ## Verification boundaries and current limitations
 

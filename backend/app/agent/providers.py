@@ -164,46 +164,149 @@ class DeterministicGradesDemoProvider:
 
 
 class DeterministicSalesDemoProvider:
-    """Narrow offline decision sequence for the August sales demonstration."""
+    """Offline north-star planner over task-scoped tools; it never computes report values."""
 
     def decide(self, goal: str, observations: list[ToolObservation]) -> ModelDecision:
         if observations and not observations[-1].success:
-            raise RuntimeError(f"A deterministic demo tool failed: {observations[-1].summary}")
-        if len(observations) == 0:
+            return Complete(
+                answer=f"The August report could not be completed safely: {observations[-1].summary}",
+                claims=[],
+            )
+        if not observations:
+            return ToolCall(tool="resource.list", arguments={})
+
+        resource_result = next(
+            (item.result for item in observations if item.tool_name == "resource.list" and item.result),
+            None,
+        )
+        if resource_result is None:
+            return ToolCall(tool="resource.list", arguments={})
+        dataset_names = list(resource_result.get("datasets", []))
+        inspected = {
+            str(item.result.get("filename")): item.result
+            for item in observations
+            if item.tool_name == "dataset.inspect" and item.result and item.result.get("filename")
+        }
+        for dataset_name in dataset_names:
+            if dataset_name not in inspected:
+                return ToolCall(tool="dataset.inspect", arguments={"dataset": dataset_name})
+
+        role_requirements = {
+            "transactions_dataset": {"transaction_id", "date", "salesperson", "customer_id", "amount", "discount", "status"},
+            "customers_dataset": {"customer_id", "region"},
+            "targets_dataset": {"region", "target"},
+        }
+        roles = {}
+        for role, required in role_requirements.items():
+            matches = [name for name, result in inspected.items() if required.issubset(set(result.get("columns", [])))]
+            if len(matches) != 1:
+                return Complete(
+                    answer=(
+                        "The uploaded datasets do not establish one unambiguous transactions, customers, and targets schema. "
+                        "Required columns must be restored before the deterministic report can run."
+                    )
+                )
+            roles[role] = matches[0]
+
+        search_observation = next(
+            (item for item in observations if item.tool_name == "document.search"),
+            None,
+        )
+        if search_observation is None:
             return ToolCall(
                 tool="document.search",
                 arguments={"query": "August commission rate completed net sales after discounts", "top_k": 5},
             )
-        if len(observations) == 1:
-            hits = (observations[-1].result or {}).get("hits", [])
+        report_observation = next(
+            (item for item in observations if item.tool_name in {"sales.north_star_report", "sales.august_report"}),
+            None,
+        )
+        if report_observation is None:
+            hits = (search_observation.result or {}).get("hits", [])
             if not hits:
                 return Complete(
                     answer="The policy did not provide commission evidence, so the August report cannot be completed.",
                     claims=[AnswerClaim(text="Commission policy evidence is missing.", kind="document")],
                 )
             evidence = [{"text": hit["text"], "source": hit["source"]} for hit in hits]
-            return ToolCall(tool="sales.august_report", arguments={"policy_evidence": evidence})
-        if len(observations) == 2:
-            result = observations[-1].result or {}
+            return ToolCall(
+                tool="sales.north_star_report",
+                arguments={**roles, "policy_evidence": evidence},
+            )
+
+        result = report_observation.result or {}
+        if result:
             rows = result.get("regional_performance", {}).get("rows", [])
-            claims = []
-            if rows:
-                largest = rows[0]
-                shortfall = float(largest.get("underperformance", 0))
-                answer = (
-                    f"The August report is ready. {largest.get('region')} has the largest target shortfall "
-                    f"at {shortfall:.2f}. The management workbook includes cleaned transactions, regional performance, and commissions."
+            commission_rows = result.get("commissions", {}).get("rows", [])
+            facts = result.get("verification_facts", {})
+            source_ids = report_observation.source_ids
+            claims = [
+                AnswerClaim(
+                    text=f"Total August net sales are {float(facts.get('total.net_sales', 0)):.2f}.",
+                    kind="numeric",
+                    value=float(facts.get("total.net_sales", 0)),
+                    evidence_keys=["total.net_sales"],
                 )
-                claims.append(AnswerClaim(text=f"Largest target shortfall is {shortfall:.2f}.", kind="numeric", value=shortfall))
-            else:
-                answer = "The August report is ready, but no regional performance rows were produced."
-            if observations[-1].source_ids:
+            ]
+            targeted_rows = [row for row in rows if row.get("target") is not None]
+            for row in targeted_rows:
+                region = str(row["region"])
+                claims.extend(
+                    [
+                        AnswerClaim(
+                            text=f"{region} net sales are {float(row['net_sales']):.2f}.",
+                            kind="numeric",
+                            value=float(row["net_sales"]),
+                            evidence_keys=[f"regional.{region}.net_sales"],
+                        ),
+                        AnswerClaim(
+                            text=f"{region} target variance is {float(row['variance']):.2f}.",
+                            kind="numeric",
+                            value=float(row["variance"]),
+                            evidence_keys=[f"regional.{region}.variance"],
+                        ),
+                    ]
+                )
+            largest = targeted_rows[0] if targeted_rows else None
+            if largest is not None:
+                shortfall = float(largest.get("underperformance", 0))
+                claims.append(
+                    AnswerClaim(
+                        text=f"{largest['region']} has the largest target shortfall at {shortfall:.2f}.",
+                        kind="numeric",
+                        value=shortfall,
+                        evidence_keys=["regional.largest_underperformance"],
+                    )
+                )
+            for row in commission_rows:
+                salesperson = str(row["salesperson"])
+                claims.append(
+                    AnswerClaim(
+                        text=f"{salesperson} commission is {float(row['commission']):.2f}.",
+                        kind="numeric",
+                        value=float(row["commission"]),
+                        source_ids=source_ids,
+                        evidence_keys=[f"commission.{salesperson}"],
+                    )
+                )
+            if source_ids:
                 claims.append(
                     AnswerClaim(
                         text="Commission calculations use the uploaded policy evidence.",
                         kind="document",
-                        source_ids=observations[-1].source_ids,
+                        source_ids=source_ids,
                     )
                 )
+            warning_count = len(result.get("warnings", []))
+            largest_summary = (
+                f" {largest['region']} has the largest target shortfall at {float(largest['underperformance']):.2f}."
+                if largest is not None else ""
+            )
+            answer = (
+                f"The August management report is ready with total net sales of "
+                f"{float(facts.get('total.net_sales', 0)):.2f}.{largest_summary} "
+                f"The workbook includes regional and salesperson performance, commissions, data-quality diagnostics, "
+                f"source provenance, and three charts. {warning_count} data/join warning(s) remain visible."
+            )
             return Complete(answer=answer, claims=claims)
-        raise RuntimeError("The deterministic sales demo exceeded its expected decision sequence.")
+        raise RuntimeError("The deterministic sales report did not return a result.")

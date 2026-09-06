@@ -85,10 +85,15 @@ class WorkflowService:
             if tool is None:
                 return self._save_run(_failed(workflow, observations, index, f"Tool '{step.tool}' is unavailable.", started_at), overrides)
             arguments = {**step.arguments, **overrides.get(index, {})}
+            if step.tool == "sales.august_report" and "policy_evidence" in overrides.get(index, {}):
+                return self._save_run(_failed(workflow, observations, index,
+                    "Saved commission evidence is pinned. Start a new sales task to retrieve a replacement policy.", started_at), overrides)
             try:
                 validated = tool.input_model.model_validate(arguments)
                 if step.expected_columns is not None:
                     _check_schema(validated, step.expected_columns)
+                if step.expected_schemas is not None:
+                    _check_nested_schemas(validated, step.expected_schemas)
                 observation = tool.handler(validated)
             except Exception as exc:
                 return self._save_run(_failed(workflow, observations, index, str(exc), started_at), overrides)
@@ -126,6 +131,21 @@ def _check_schema(arguments, expected_columns: list[str]) -> None:
     actual = inspect_dataset(dataset).columns
     if actual != expected_columns:
         raise WorkflowError(f"Schema drift detected: expected columns {expected_columns}, received {actual}.")
+
+
+def _check_nested_schemas(arguments, expected_schemas: dict[str, list[str]]) -> None:
+    for resource_name, expected_columns in expected_schemas.items():
+        resource = getattr(arguments, resource_name, None)
+        if resource is None or not all(hasattr(resource, name) for name in ("filename", "content", "sheet")):
+            raise WorkflowError(
+                f"Schema expectation for '{resource_name}' does not reference a dataset-backed argument."
+            )
+        dataset = load_dataset(resource.filename, resource.content(), resource.sheet)
+        actual = inspect_dataset(dataset).columns
+        if actual != expected_columns:
+            raise WorkflowError(
+                f"Schema drift detected for {resource_name}: expected columns {expected_columns}, received {actual}."
+            )
 
 
 def _failed(workflow, observations, index, error, started_at) -> WorkflowRun:

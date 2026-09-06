@@ -10,10 +10,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent.models import AgentDatasetResource, AgentTaskResources, ToolObservation
+from app.agent.models import AgentDatasetResource, AgentTaskResources, ExecutionStage, ToolObservation
 from app.models.retrieval import RetrievalRequest
 from app.models.grades import PolicyEvidence, RequiredFinalInput
 from app.models.transformations import JoinSpec, Transformation, TransformRequest
+from app.models.workflows import WorkflowCreate, WorkflowStep
 from app.services.datasets import inspect_dataset, load_dataset, profile_dataset
 from app.services.retrieval import RetrievalService
 from app.services.grades import calculate_required_final
@@ -110,6 +111,13 @@ class BoundSalesReportInput(ToolInput):
     policy_evidence: list[PolicyEvidence] = Field(min_length=1, max_length=20)
 
 
+class GeneralSalesReportInput(ToolInput):
+    transactions_dataset: str = Field(min_length=1, max_length=255)
+    customers_dataset: str = Field(min_length=1, max_length=255)
+    targets_dataset: str = Field(min_length=1, max_length=255)
+    policy_evidence: list[PolicyEvidence] = Field(min_length=1, max_length=20)
+
+
 class ResourceListInput(ToolInput):
     pass
 
@@ -182,6 +190,8 @@ def general_task_tools(
     datasets = {resource.filename: resource for resource in resources.all_datasets()}
     document_ids = resources.all_document_ids()
     allowed_workflows = set(resources.workflow_ids)
+    inspected_datasets: set[str] = set()
+    retrieved_evidence: dict[str, PolicyEvidence] = {}
 
     def list_resources(_: ResourceListInput) -> ToolObservation:
         return ToolObservation(
@@ -209,6 +219,7 @@ def general_task_tools(
     if datasets:
         def inspect_bound(arguments: BoundDatasetReferenceInput) -> ToolObservation:
             dataset = _load_bound_dataset(datasets, arguments.dataset)
+            inspected_datasets.add(arguments.dataset)
             result = inspect_dataset(dataset).model_dump(mode="json")
             return ToolObservation(
                 success=True,
@@ -322,6 +333,8 @@ def general_task_tools(
                 hits.extend(response.hits)
             hits.sort(key=lambda hit: (-hit.score, str(hit.source.chunk_id)))
             ranked = [hit.model_copy(update={"rank": index}) for index, hit in enumerate(hits[:arguments.top_k], 1)]
+            for hit in ranked:
+                retrieved_evidence[str(hit.source.chunk_id)] = PolicyEvidence(text=hit.text, source=hit.source)
             return ToolObservation(
                 success=True,
                 summary=f"Retrieved {len(ranked)} grounded evidence chunks from bound documents.",
@@ -337,6 +350,58 @@ def general_task_tools(
                 search_bound,
             )
         )
+
+        if len(datasets) >= 3:
+            def general_sales_report(arguments: GeneralSalesReportInput) -> ToolObservation:
+                names = {arguments.transactions_dataset, arguments.customers_dataset, arguments.targets_dataset}
+                if len(names) != 3 or not names.issubset(inspected_datasets):
+                    raise ValueError("Inspect three distinct bound datasets before preparing the sales report.")
+                if not retrieved_evidence or any(
+                    retrieved_evidence.get(str(item.source.chunk_id)) != item for item in arguments.policy_evidence
+                ):
+                    raise ValueError("Commission evidence must exactly match policy text and citations retrieved in this task.")
+                # Use all observed evidence, so omitting a conflicting chunk cannot alter the rule.
+                authoritative_evidence = list(retrieved_evidence.values())
+                selected = {
+                    "transactions": datasets.get(arguments.transactions_dataset),
+                    "customers": datasets.get(arguments.customers_dataset),
+                    "targets": datasets.get(arguments.targets_dataset),
+                }
+                missing = [name for name, resource in selected.items() if resource is None]
+                if missing:
+                    raise ValueError(f"Sales report resource role(s) are not bound: {', '.join(missing)}.")
+                transaction_resource = selected["transactions"]
+                customer_resource = selected["customers"]
+                target_resource = selected["targets"]
+                assert transaction_resource is not None and customer_resource is not None and target_resource is not None
+                generated = build_august_sales_report(
+                    _load_bound_dataset(datasets, arguments.transactions_dataset).frame,
+                    _load_bound_dataset(datasets, arguments.customers_dataset).frame,
+                    _load_bound_dataset(datasets, arguments.targets_dataset).frame,
+                    authoritative_evidence,
+                    source_names={
+                        "transactions": arguments.transactions_dataset,
+                        "customers": arguments.customers_dataset,
+                        "targets": arguments.targets_dataset,
+                    },
+                )
+                workflow = _save_sales_workflow(
+                    workflow_service,
+                    transaction_resource,
+                    customer_resource,
+                    target_resource,
+                    authoritative_evidence,
+                )
+                return _sales_observation(generated, artifact_repository, workflow)
+
+            tools.append(
+                TypedTool(
+                    "sales.north_star_report",
+                    "Use only after inspecting the three selected datasets and retrieving policy evidence. Deterministically clean completed August transactions, diagnose customer/target joins, analyze target performance and underperformance drivers, calculate policy-grounded commissions, generate professional charts and a management workbook, and save a schema-checked recipe.",
+                    GeneralSalesReportInput,
+                    general_sales_report,
+                )
+            )
 
     if allowed_workflows and workflow_service is not None:
         def run_workflow(arguments: BoundWorkflowRunInput) -> ToolObservation:
@@ -509,7 +574,17 @@ def sales_report_tool(artifact_repository: ArtifactRepository | None = None) -> 
         transactions = load_dataset(arguments.transactions.filename, arguments.transactions.content(), arguments.transactions.sheet)
         customers = load_dataset(arguments.customers.filename, arguments.customers.content(), arguments.customers.sheet)
         targets = load_dataset(arguments.targets.filename, arguments.targets.content(), arguments.targets.sheet)
-        generated = build_august_sales_report(transactions.frame, customers.frame, targets.frame, arguments.policy_evidence)
+        generated = build_august_sales_report(
+            transactions.frame,
+            customers.frame,
+            targets.frame,
+            arguments.policy_evidence,
+            source_names={
+                "transactions": arguments.transactions.filename,
+                "customers": arguments.customers.filename,
+                "targets": arguments.targets.filename,
+            },
+        )
         return _sales_observation(generated, artifact_repository)
 
     return TypedTool(
@@ -527,6 +602,7 @@ def sales_task_tools(
     targets_resource: AgentDatasetResource,
     document_id: UUID,
     artifact_repository: ArtifactRepository,
+    workflow_service: WorkflowService | None = None,
 ) -> list[TypedTool[Any]]:
     """Build task-scoped sales tools without exposing uploaded file bodies to a model."""
 
@@ -548,8 +624,20 @@ def sales_task_tools(
             customers.frame,
             targets.frame,
             arguments.policy_evidence,
+            source_names={
+                "transactions": transactions_resource.filename,
+                "customers": customers_resource.filename,
+                "targets": targets_resource.filename,
+            },
         )
-        return _sales_observation(generated, artifact_repository)
+        workflow = _save_sales_workflow(
+            workflow_service,
+            transactions_resource,
+            customers_resource,
+            targets_resource,
+            arguments.policy_evidence,
+        )
+        return _sales_observation(generated, artifact_repository, workflow)
 
     return [
         TypedTool(
@@ -567,7 +655,7 @@ def sales_task_tools(
     ]
 
 
-def _sales_observation(generated, artifact_repository: ArtifactRepository | None) -> ToolObservation:
+def _sales_observation(generated, artifact_repository: ArtifactRepository | None, workflow=None) -> ToolObservation:
     if artifact_repository is not None:
         artifact_repository.save(generated.artifact)
     result = {
@@ -575,6 +663,16 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
             "regional_performance": dataframe_result(generated.regional_performance).model_dump(mode="json"),
             "commissions": dataframe_result(generated.commissions).model_dump(mode="json"),
             "join_diagnostics": generated.join_diagnostics.model_dump(mode="json"),
+            "target_join_diagnostics": generated.target_join_diagnostics,
+            "data_quality": generated.data_quality,
+            "warnings": generated.warnings,
+            "verification_facts": generated.verification_facts,
+            "trace_metadata": {
+                "input_rows": generated.data_quality.get("original_transaction_rows", 0),
+                "cleaned_rows": generated.data_quality.get("cleaned_rows", 0),
+                "customer_unmatched_rows": generated.join_diagnostics.left_unmatched_rows,
+                "regions_missing_targets": generated.target_join_diagnostics["regions_missing_targets"],
+            },
             "artifact": {
                 "artifact_id": str(generated.artifact.artifact_id),
                 "filename": generated.artifact.filename,
@@ -584,10 +682,115 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
                 "download_url": f"/artifacts/{generated.artifact.artifact_id}",
             },
         }
+    if workflow is not None:
+        result["saved_workflow"] = {
+            "workflow_id": str(workflow.workflow_id),
+            "name": workflow.name,
+            "version": workflow.version,
+            "rerun_url": f"/workflows/{workflow.workflow_id}/runs",
+        }
+    source_ids = [str(source.chunk_id) for source in generated.citations]
+    stages = [
+        ExecutionStage(
+            name="Clean",
+            status="warning" if any(value for key, value in generated.data_quality.items() if key.endswith(("excluded", "removed", "zero")) and isinstance(value, int)) else "completed",
+            explanation=(
+                f"Created a new cleaned table with {len(generated.cleaned_transactions)} rows from "
+                f"{generated.data_quality.get('original_transaction_rows', 0)} source rows; originals were not modified."
+            ),
+            tool_name="sales.north_star_report",
+            row_counts={
+                "source": int(generated.data_quality.get("original_transaction_rows", 0)),
+                "cleaned": len(generated.cleaned_transactions),
+            },
+            diagnostics=generated.data_quality,
+        ),
+        ExecutionStage(
+            name="Join",
+            status="warning" if generated.warnings else "completed",
+            explanation="Joined transactions to customer regions and regional targets with explicit loss and multiplication diagnostics.",
+            tool_name="sales.north_star_report",
+            row_counts={
+                "customer_join_output": generated.join_diagnostics.output_rows,
+                "regional_rows": len(generated.regional_performance),
+            },
+            diagnostics={
+                "customers": generated.join_diagnostics.model_dump(mode="json"),
+                "targets": generated.target_join_diagnostics,
+            },
+        ),
+        ExecutionStage(
+            name="Analyze",
+            status="completed",
+            explanation=f"Calculated deterministic regional actuals, targets, variances, and underperformance for {len(generated.regional_performance)} regions.",
+            tool_name="sales.north_star_report",
+            row_counts={"regions": len(generated.regional_performance)},
+        ),
+        ExecutionStage(
+            name="Calculate commissions",
+            status="completed",
+            explanation=f"Applied the cited {generated.commission_rate * 100:g}% policy rate to completed August net sales for {len(generated.commissions)} salespeople.",
+            tool_name="sales.north_star_report",
+            row_counts={"salespeople": len(generated.commissions)},
+            evidence_ids=source_ids,
+        ),
+        ExecutionStage(
+            name="Generate charts and workbook",
+            status="completed",
+            explanation="Generated an auditable six-sheet management workbook with three decision-useful charts.",
+            tool_name="sales.north_star_report",
+            artifact_ids=[str(generated.artifact.artifact_id)],
+        ),
+    ]
+    if workflow is not None:
+        stages.append(
+            ExecutionStage(
+                name="Save workflow",
+                status="completed",
+                explanation=f"Saved schema-checked deterministic recipe '{workflow.name}' version {workflow.version}.",
+                tool_name="sales.north_star_report",
+            )
+        )
     return ToolObservation(
         success=True,
         summary=f"Prepared August report for {len(generated.regional_performance)} regions and {len(generated.commissions)} salespeople.",
         result=result,
         artifact_ids=[str(generated.artifact.artifact_id)],
-        source_ids=[str(source.chunk_id) for source in generated.citations],
+        source_ids=source_ids,
+        stages=stages,
+        warnings=generated.warnings,
+    )
+
+
+def _save_sales_workflow(
+    workflow_service: WorkflowService | None,
+    transactions_resource,
+    customers_resource,
+    targets_resource,
+    policy_evidence: list[PolicyEvidence],
+):
+    if workflow_service is None:
+        return None
+    resources = {
+        "transactions": transactions_resource.model_dump(mode="json"),
+        "customers": customers_resource.model_dump(mode="json"),
+        "targets": targets_resource.model_dump(mode="json"),
+    }
+    expected_schemas = {}
+    for name, resource in resources.items():
+        validated = DatasetInput.model_validate(resource)
+        expected_schemas[name] = inspect_dataset(
+            load_dataset(validated.filename, validated.content(), validated.sheet)
+        ).columns
+    return workflow_service.create(
+        WorkflowCreate(
+            name="August sales management report",
+            steps=[
+                WorkflowStep(
+                    tool="sales.august_report",
+                    arguments={**resources, "policy_evidence": [item.model_dump(mode="json") for item in policy_evidence]},
+                    expected_schemas=expected_schemas,
+                )
+            ],
+        )
     )

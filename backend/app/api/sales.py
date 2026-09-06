@@ -5,13 +5,13 @@ import base64
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 
-from app.agent.models import AgentDatasetResource, AgentExecution
+from app.agent.models import AgentDatasetResource, AgentExecution, AgentTaskResources
 from app.agent.orchestrator import AgentOrchestrator
 from app.agent.providers import DeterministicSalesDemoProvider, OpenAIModelProvider
-from app.agent.tools import ToolRegistry, sales_task_tools
+from app.agent.tools import ToolRegistry, general_task_tools
 from app.agent.verification import EvidenceVerifier
 from app.config import Settings, get_settings
-from app.dependencies import build_retrieval_service, get_artifact_repository, get_execution_repository
+from app.dependencies import build_retrieval_service, get_artifact_repository, get_execution_repository, get_workflow_service
 from app.embeddings.base import EmbeddingError
 from app.repositories.documents import RepositoryError
 from app.services.artifacts import ArtifactRepository
@@ -41,7 +41,7 @@ async def prepare_august_report(
     customers: UploadFile = File(...),
     targets: UploadFile = File(...),
     policy: UploadFile = File(...),
-    goal: str = Form(default="Prepare the August sales report."),
+    goal: str = Form(default="Prepare the August sales report.", min_length=1, max_length=10000),
     settings: Settings = Depends(get_settings),
 ) -> AgentExecution:
     if settings.app_mode == "production" and settings.orchestrator_provider != "openai":
@@ -49,6 +49,8 @@ async def prepare_august_report(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="ORCHESTRATOR_PROVIDER=openai is required for production task execution.",
         )
+    if settings.app_mode == "production" and not settings.orchestrator_api_key:
+        raise HTTPException(status_code=503, detail="ORCHESTRATOR_API_KEY or OPENAI_API_KEY is required for production task execution.")
     transaction_upload, customer_upload, target_upload, policy_upload = await _read(transactions, MAX_UPLOAD_BYTES), await _read(customers, MAX_UPLOAD_BYTES), await _read(targets, MAX_UPLOAD_BYTES), await _read(policy, settings.pdf_max_upload_bytes)
     retrieval_service = build_retrieval_service(settings)
     try:
@@ -78,30 +80,32 @@ async def prepare_august_report(
 
     repository: ArtifactRepository | None = getattr(request.app.state, "artifact_repository", None)
     repository = repository or get_artifact_repository(settings)
+    resources = AgentTaskResources(
+        datasets=[resource(transaction_upload), resource(customer_upload), resource(target_upload)],
+        document_ids=[ingested.document_id],
+    )
     registry = ToolRegistry(
-        sales_task_tools(
+        general_task_tools(
             retrieval_service,
-            resource(transaction_upload),
-            resource(customer_upload),
-            resource(target_upload),
-            ingested.document_id,
+            resources,
             repository,
+            get_workflow_service(settings),
         )
     )
     if settings.app_mode == "demo":
         provider = DeterministicSalesDemoProvider()
     else:
-        if not settings.openai_api_key:
-            raise HTTPException(status_code=503, detail="OPENAI_API_KEY is required for production task execution.")
         provider = OpenAIModelProvider(
-            settings.openai_api_key,
+            settings.orchestrator_api_key,
             settings.orchestrator_model,
             registry.specifications,
             settings.orchestrator_timeout_seconds,
             settings.orchestrator_max_retries,
+            settings.orchestrator_base_url,
+            settings.orchestrator_max_output_tokens,
         )
     orchestrator = AgentOrchestrator(provider, registry, EvidenceVerifier())
-    execution = await run_in_threadpool(orchestrator.execute, goal, 8)
+    execution = await run_in_threadpool(orchestrator.execute, goal, 12)
     try:
         persist_execution(execution, get_execution_repository(settings), repository)
     except RepositoryError as exc:

@@ -8,6 +8,7 @@ import base64
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.retrieval import SourceReference
+from app.models.grades import PolicyEvidence
 
 
 class StrictModel(BaseModel):
@@ -31,6 +32,7 @@ class AnswerClaim(StrictModel):
     kind: Literal["numeric", "document"]
     value: float | None = None
     source_ids: list[str] = Field(default_factory=list)
+    evidence_keys: list[str] = Field(default_factory=list)
 
 
 ModelDecision = Annotated[ToolCall | Complete, Field(discriminator="type")]
@@ -50,6 +52,8 @@ class ToolObservation(StrictModel):
     recoverable: bool = True
     artifact_ids: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
+    stages: list["ExecutionStage"] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class TraceStep(StrictModel):
@@ -62,6 +66,21 @@ class TraceStep(StrictModel):
     artifact_ids: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     duration_ms: float = Field(ge=0)
+    stage: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExecutionStage(StrictModel):
+    name: str = Field(min_length=1, max_length=100)
+    status: Literal["completed", "warning", "failed"]
+    explanation: str = Field(min_length=1, max_length=2000)
+    tool_name: str | None = Field(default=None, max_length=100)
+    row_counts: dict[str, int] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    evidence_ids: list[str] = Field(default_factory=list)
+    artifact_ids: list[str] = Field(default_factory=list)
+    verification_result: str | None = Field(default=None, max_length=100)
 
 
 class ArtifactReference(StrictModel):
@@ -71,6 +90,13 @@ class ArtifactReference(StrictModel):
     download_url: str
     row_count: int = Field(ge=0)
     column_count: int = Field(ge=0)
+
+
+class WorkflowReference(StrictModel):
+    workflow_id: UUID
+    name: str
+    version: int = Field(ge=1)
+    rerun_url: str
 
 
 class AgentExecution(StrictModel):
@@ -85,17 +111,21 @@ class AgentExecution(StrictModel):
     failure_code: str | None = None
     verification: "VerificationReport | None" = None
     citations: list[SourceReference] = Field(default_factory=list)
+    evidence: list[PolicyEvidence] = Field(default_factory=list)
     artifacts: list[ArtifactReference] = Field(default_factory=list)
+    stages: list[ExecutionStage] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    saved_workflow: WorkflowReference | None = None
 
 
 class VerificationFinding(StrictModel):
-    status: Literal["verified", "unsupported", "conflicting", "insufficient_evidence", "failed"]
+    status: Literal["verified", "warning", "unsupported", "conflicting", "insufficient_evidence", "failed"]
     claim: str
     explanation: str
 
 
 class VerificationReport(StrictModel):
-    status: Literal["verified", "unsupported", "conflicting", "insufficient_evidence", "failed"]
+    status: Literal["verified", "verified_with_warnings", "unsupported", "conflicting", "insufficient_evidence", "failed"]
     findings: list[VerificationFinding] = Field(default_factory=list)
 
 
@@ -160,5 +190,15 @@ class AgentTaskResources(StrictModel):
             and self.document_id is not None
             and not self.datasets
             and not self.document_ids
+            and not self.workflow_ids
+        )
+
+    @property
+    def is_north_star_sales_demo(self) -> bool:
+        return (
+            self.dataset is None
+            and self.document_id is None
+            and len(self.datasets) == 3
+            and len(self.document_ids) == 1
             and not self.workflow_ids
         )

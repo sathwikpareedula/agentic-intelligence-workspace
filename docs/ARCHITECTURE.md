@@ -40,6 +40,8 @@ One orchestrator runs a bounded decide/observe/replan loop over a strict task-sc
 
 Production tasks bind up to eight uploaded datasets, eight ingested document IDs, and twenty saved workflow IDs. The model receives identifiers and JSON schemas rather than file bodies. Task tools expose resource listing, inspection/profile, validated transformation and aggregation, joins with diagnostics, complete CSV/XLSX exports, evidence search limited to bound documents, and reruns limited to bound workflows. The model cannot submit Python, SQL, shell, filesystem paths, or unregistered actions.
 
+The north-star sales path is registered in this same task-scoped tool registry. A deterministic demo planner uses resource listing plus inspected columns to identify the transaction, customer, and target roles; production providers receive the same typed capability. The specialized tool returns bounded tables, join/data-quality diagnostics, named verification facts, policy source IDs, a workbook artifact, and a saved workflow reference. It does not return or require hidden model reasoning.
+
 ### Deterministic Data Tools
 
 Current deterministic services ingest CSV/XLSX data; inspect and profile datasets; and apply typed selection, filtering, sorting, renaming, deduplication, missing-value handling, restricted arithmetic derivation, grouping, aggregation, and joins. Join diagnostics surface unmatched rows and repeated-key multiplication. Broader calculations, schema checks, and validations remain future work. Inputs and outputs are typed and testable; an LLM is not the computation engine.
@@ -50,7 +52,7 @@ The retrieval service validates and extracts text from PDFs in memory, chunks no
 
 ### Verification
 
-Verification checks declared numeric claims against deterministic outputs and document claims against observed citation IDs. It propagates failed calculations and conflict/insufficiency states. It is deliberately not a universal truth verifier.
+Verification checks declared numeric claims against deterministic outputs and document claims against observed citation IDs. Product-critical claims may name exact fact keys so an unrelated equal number cannot accidentally verify them. Commission fact keys require both the matching deterministic output and observed policy citation IDs. Data/join warnings produce `verified_with_warnings`; failed tools, conflicts, unsupported values, and insufficient evidence retain stronger precedence. It is deliberately not a universal truth verifier.
 
 ### Storage
 
@@ -61,6 +63,8 @@ PostgreSQL also stores workflows, immutable workflow-version recipes, rerun reco
 ### Artifacts and Trace
 
 CSV/XLSX and management workbooks are generated in memory with IDs, shape, producer references, provenance, formula neutralization, and optional deterministic charts. File bodies are redacted from traces. Production writes bodies through the artifact-store boundary and metadata through PostgreSQL; demo mode retains the in-memory repository.
+
+Executions expose structured stages for goal, bounded plan, resource inspection, evidence retrieval, deterministic report phases, verification, and completion. Each stage carries only concise execution facts such as tool name, status, row counts, diagnostics, evidence IDs, verification result, and artifact IDs. Successful north-star runs save a one-step deterministic sales recipe with expected schemas for all nested dataset inputs; compatible resources can replace them on rerun, while missing or reordered columns fail as schema drift before calculation.
 
 ### Readiness and Failure Behavior
 

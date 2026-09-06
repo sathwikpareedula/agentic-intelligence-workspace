@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.agent.models import AgentExecution, AgentTaskRequest
 from app.agent.orchestrator import AgentOrchestrator
-from app.agent.providers import DeterministicGradesDemoProvider, OpenAIModelProvider
+from app.agent.providers import DeterministicGradesDemoProvider, DeterministicSalesDemoProvider, OpenAIModelProvider
 from app.agent.tools import ToolRegistry, general_task_tools, grade_task_tools
 from app.agent.verification import EvidenceVerifier
 from app.config import Settings, get_settings
@@ -42,22 +42,35 @@ def execute_agent_task(
         )
 
     if settings.app_mode == "demo":
-        if not payload.resources.is_legacy_grades_demo:
+        if payload.resources.is_legacy_grades_demo:
+            assert payload.resources.dataset is not None
+            assert payload.resources.document_id is not None
+            retrieval_service = build_retrieval_service(settings)
+            registry = ToolRegistry(
+                grade_task_tools(
+                    retrieval_service,
+                    payload.resources.dataset,
+                    payload.resources.document_id,
+                )
+            )
+            provider = DeterministicGradesDemoProvider()
+        elif payload.resources.is_north_star_sales_demo:
+            retrieval_service = build_retrieval_service(settings)
+            artifact_repository = get_artifact_repository(settings)
+            registry = ToolRegistry(
+                general_task_tools(
+                    retrieval_service,
+                    payload.resources,
+                    artifact_repository,
+                    get_workflow_service(settings),
+                )
+            )
+            provider = DeterministicSalesDemoProvider()
+        else:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="APP_MODE=demo supports the explicit deterministic grades workflow only.",
+                detail="APP_MODE=demo supports the explicit deterministic grades workflow or the three-dataset plus one-policy north-star sales workflow.",
             )
-        assert payload.resources.dataset is not None
-        assert payload.resources.document_id is not None
-        retrieval_service = build_retrieval_service(settings)
-        registry = ToolRegistry(
-            grade_task_tools(
-                retrieval_service,
-                payload.resources.dataset,
-                payload.resources.document_id,
-            )
-        )
-        provider = DeterministicGradesDemoProvider()
     else:
         if not settings.orchestrator_api_key:
             raise HTTPException(
@@ -74,7 +87,7 @@ def execute_agent_task(
             retrieval_service,
             payload.resources,
             artifact_repository,
-            get_workflow_service(settings) if payload.resources.workflow_ids else None,
+            get_workflow_service(settings),
         )
         if payload.resources.is_legacy_grades_demo:
             assert payload.resources.dataset is not None

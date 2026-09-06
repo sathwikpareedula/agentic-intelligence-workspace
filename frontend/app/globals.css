@@ -19,6 +19,8 @@ label { font-weight:700; display:block; }
 textarea { width:100%; min-height:118px; resize:vertical; margin:10px 0 18px; border:1px solid #bfc8c1; border-radius:12px; padding:15px; font:inherit; line-height:1.5; background:white; }
 textarea:focus,input:focus,button:focus { outline:3px solid rgba(23,108,76,.2); outline-offset:2px; }
 .modePicker { display:block; width:min(360px,100%); margin:9px 0 20px; padding:10px 12px; border:1px solid #bfc8c1; border-radius:9px; background:white; font:inherit; }
+.promise { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; margin:-4px 0 22px; overflow:hidden; border:1px solid var(--line); border-radius:10px; background:var(--line); }
+.promise span { padding:10px 12px; background:#f8faf7; color:var(--green); font-size:.76rem; font-weight:750; letter-spacing:.02em; }
 .uploads { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .upload { border:1px dashed #aeb9b1; border-radius:11px; padding:13px; font-size:.85rem; }
 .upload input { display:block; margin:9px 0; width:100%; }
@@ -26,25 +28,49 @@ textarea:focus,input:focus,button:focus { outline:3px solid rgba(23,108,76,.2); 
 button { margin-top:18px; border:0; border-radius:10px; padding:13px 20px; color:white; background:var(--green); font-weight:750; cursor:pointer; }
 button:disabled { opacity:.55; cursor:not-allowed; }
 .hint { margin:9px 0 0; color:var(--muted); font-size:.82rem; }
+.progress { display:flex; align-items:center; gap:8px; margin:11px 0 0; color:var(--green); font-size:.84rem; }
+.progress span { width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 0 5px rgba(23,108,76,.12); animation:pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity:.35; } }
 .results { display:grid; grid-template-columns:1.2fr .8fr; gap:16px; margin-top:16px; }
 .panel { padding:22px; min-height:180px; }
 .answer { grid-column:1/-1; }
 .answer>p { font-family:Georgia,serif; font-size:clamp(1.25rem,2.5vw,2rem); line-height:1.45; max-width:880px; }
 .artifactLink { display:inline-flex; flex-direction:column; gap:3px; margin-top:8px; padding:11px 14px; border:1px solid #a9d7c2; border-radius:9px; color:var(--green); background:#f0faf4; font-weight:700; text-decoration:none; }
 .artifactLink small { color:var(--muted); font-weight:400; }
+.deliverables { display:flex; flex-wrap:wrap; gap:10px; align-items:stretch; }
+.workflowCard { display:inline-flex; flex-direction:column; gap:3px; margin-top:8px; padding:11px 14px; border:1px solid #c8cfca; border-radius:9px; background:#f8faf7; }
+.workflowCard span { color:var(--green); font-size:.72rem; font-weight:750; text-transform:uppercase; letter-spacing:.06em; }
+.workflowCard small { color:var(--muted); }
 .panelTitle { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid var(--line); padding-bottom:13px; }
 h2 { margin:0; font-size:.95rem; letter-spacing:.02em; }
 .trace { list-style:none; margin:18px 0 0; padding:0; }
 .trace li { display:flex; gap:12px; margin-bottom:18px; }
+.trace li>div { min-width:0; flex:1; }
 .trace p,.finding p { margin:5px 0; color:var(--muted); line-height:1.45; }
+.stageTitle { display:flex; justify-content:space-between; gap:10px; }
+.stageTitle span { color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; }
+.facts { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+.facts small { padding:4px 7px; border-radius:6px; background:#edf2ee; color:#45544d; }
 .dot { width:10px; height:10px; margin-top:5px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
-.dot.ok,.pill.verified { background:#e7f5ed; color:var(--green); border-color:#a9d7c2; }
+.dot.ok,.pill.verified,.pill.verified_with_warnings { background:#e7f5ed; color:var(--green); border-color:#a9d7c2; }
+.dot.warn { background:#d49a42; }
 .dot.fail,.pill.failed,.pill.unsupported { background:#faecea; color:var(--red); border-color:#e1b0aa; }
-.pill.conflicting,.pill.insufficient_evidence { color:var(--amber); background:#fff4df; border-color:#e6c68e; }
+.pill.conflicting,.pill.insufficient_evidence,.pill.warning { color:var(--amber); background:#fff4df; border-color:#e6c68e; }
+.warnings { margin:16px 0 6px; padding:13px 14px; border:1px solid #e6c68e; border-radius:10px; background:#fff9ec; }
+.warnings p { margin:7px 0 0; color:#69430f; font-size:.84rem; line-height:1.45; }
+.technicalTrace { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+.technicalTrace summary { cursor:pointer; color:var(--green); font-weight:700; }
+.technicalTrace article { display:grid; grid-template-columns:1fr auto; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); }
+.technicalTrace article p { grid-column:1/-1; margin:0; color:var(--muted); }
 .finding { padding:15px 0; border-bottom:1px solid var(--line); }
 .finding strong { display:block; margin-top:10px; }
 .citation { padding:13px 0; border-bottom:1px solid var(--line); }
 .citation strong,.citation code { display:block; }
 .citation code { color:var(--muted); font-size:.72rem; margin-top:5px; overflow-wrap:anywhere; }
 .error { color:var(--red); }
-@media (max-width:720px) { main { width:min(100% - 24px,1180px); padding-top:30px; } header { display:block; } header .status { display:inline-block; margin-top:10px; } .uploads,.results { grid-template-columns:1fr; } .answer { grid-column:auto; } .composer,.panel { padding:18px; } }
+.policyEvidence { grid-column:1/-1; min-height:0; }
+.policyEvidence blockquote { margin:16px 0 0; padding-left:16px; border-left:3px solid var(--green); line-height:1.5; }
+.policyEvidence cite { color:var(--muted); font-size:.85rem; }
+select:focus-visible, a:focus-visible, summary:focus-visible { outline:3px solid rgba(23,108,76,.4); outline-offset:3px; }
+@media (prefers-reduced-motion:reduce) { .progress span { animation:none; } }
+@media (max-width:720px) { main { width:min(100% - 24px,1180px); padding-top:30px; } header { display:block; } header .status { display:inline-block; margin-top:10px; } .uploads,.results,.promise { grid-template-columns:1fr; } .answer { grid-column:auto; } .composer,.panel { padding:18px; } }

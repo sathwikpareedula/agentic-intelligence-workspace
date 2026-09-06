@@ -1,0 +1,25 @@
+{
+  "tool_sequence": [
+    "resource.list",
+    "dataset.inspect",
+    "dataset.inspect",
+    "dataset.inspect",
+    "document.search",
+    "sales.north_star_report"
+  ],
+  "total_net_sales": 2350.0,
+  "largest_underperformance_region": "North",
+  "largest_underperformance": 650.0,
+  "north_net_sales": 1350.0,
+  "north_variance": -650.0,
+  "alice_commission": 67.5,
+  "left_unmatched_rows": 1,
+  "workbook_sheets": [
+    "Executive Summary",
+    "Regional Performance",
+    "Salesperson Performance",
+    "Cleaned Transactions",
+    "Data Quality",
+    "Provenance & Sources"
+  ]
+}
