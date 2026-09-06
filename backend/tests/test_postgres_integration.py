@@ -9,7 +9,7 @@ import psycopg
 import pytest
 
 from app.repositories.database import probe_database
-from app.repositories.documents import PostgresDocumentRepository, StoredChunk, StoredDocument
+from app.repositories.documents import PostgresDocumentRepository, RepositoryError, StoredChunk, StoredDocument
 from app.agent.models import AgentExecution
 from app.agent.tools import ToolRegistry, dataset_tools
 from app.models.workflows import WorkflowCreate, WorkflowStep
@@ -65,6 +65,15 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
     try:
         repository.save_document(first_document, [first_chunk])
         repository.save_document(second_document, [second_chunk])
+
+        # A batch constraint error must roll back both metadata and chunk replacement.
+        replacement = StoredDocument(first_document.document_id, "replacement.pdf", 1, "integration", "fixed-v1", 3)
+        with pytest.raises(RepositoryError, match="Could not store document chunks"):
+            repository.save_document(replacement, [first_chunk, first_chunk])
+        retained = repository.search([1.0, 0.0, 0.0], 2, first_document.document_id)
+        assert len(retained) == 1
+        assert retained[0].filename == "first.pdf"
+        assert retained[0].text == "alpha"
 
         all_hits = repository.search([1.0, 0.0, 0.0], 2)
         filtered_hits = repository.search([1.0, 0.0, 0.0], 2, second_document.document_id)
