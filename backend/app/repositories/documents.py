@@ -6,6 +6,7 @@ from typing import Protocol
 from uuid import UUID
 
 import psycopg
+from pgvector import Vector
 from pgvector.psycopg import register_vector
 
 
@@ -151,29 +152,31 @@ class PostgresDocumentRepository:
                     ),
                 )
                 connection.execute("DELETE FROM document_chunks WHERE document_id = %s", (document.document_id,))
-                connection.executemany(
-                    """
-                    INSERT INTO document_chunks
-                        (id, document_id, page_number, chunk_index, content, embedding)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    [
-                        (chunk.chunk_id, chunk.document_id, chunk.page_number, chunk.chunk_index, chunk.text, chunk.embedding)
-                        for chunk in chunks
-                    ],
-                )
+                with connection.cursor() as cursor:
+                    cursor.executemany(
+                        """
+                        INSERT INTO document_chunks
+                            (id, document_id, page_number, chunk_index, content, embedding)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            (chunk.chunk_id, chunk.document_id, chunk.page_number, chunk.chunk_index, chunk.text, Vector(chunk.embedding))
+                            for chunk in chunks
+                        ],
+                    )
         except psycopg.Error as exc:
             raise RepositoryError("Could not store document chunks.") from exc
 
     def search(self, embedding: list[float], top_k: int, document_id: UUID | None = None) -> list[RepositorySearchHit]:
         if len(embedding) != self._dimension:
             raise RepositoryError("Query embedding dimension does not match the configured repository dimension.")
-        params: list[object] = [embedding, self._embedding_provider, self._embedding_model, self._dimension]
+        query_vector = Vector(embedding)
+        params: list[object] = [query_vector, self._embedding_provider, self._embedding_model, self._dimension]
         where = "WHERE d.embedding_provider = %s AND d.embedding_model = %s AND d.embedding_dimensions = %s"
         if document_id is not None:
             where += " AND c.document_id = %s"
             params.append(document_id)
-        params.extend([embedding, top_k])
+        params.extend([query_vector, top_k])
         try:
             with self._connect() as connection:
                 rows = connection.execute(
