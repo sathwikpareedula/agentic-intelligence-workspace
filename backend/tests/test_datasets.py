@@ -133,11 +133,11 @@ def test_xlsx_rejects_unknown_sheet() -> None:
 def test_rejects_unsupported_file_type() -> None:
     response = client.post(
         "/datasets/inspect",
-        files={"file": ("records.json", b"{}", "application/json")},
+        files={"file": ("records.xml", b"<rows/>", "application/xml")},
     )
 
     assert response.status_code == 415
-    assert response.json()["detail"] == "Unsupported file type. Upload a .csv or .xlsx file."
+    assert "Unsupported file type" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(

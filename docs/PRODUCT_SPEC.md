@@ -58,6 +58,10 @@ The workspace accepts one to eight CSV/XLSX sources, an exact CSV/XLSX target te
 
 Successful XLSX jobs write a new artifact while preserving sheet names/order, unrelated sheets, formats, and trusted local template formulas. CSV jobs preserve exact headers/order. Both formats neutralize untrusted formula-like source text, reopen the result, validate schema and required/unique fields, attach per-field provenance, and save a recipe that pins mappings/rules/evidence. Reruns accept replacement sources/templates only when their roles, schemas, and structural template fingerprint remain compatible.
 
+## Phase 2 Sources
+
+The workspace can inspect/import JSON (array of objects or one clearly selected record array), Parquet, UTF-8 text documents, a read-only external PostgreSQL source, and GET-only REST JSON. Secrets are environment references. There is no secret manager, OAuth, natural-language SQL, MySQL, SaaS connector, or DOCX extractor in this phase.
+
 ## Evidence-First Behavior
 
 The system must distinguish sourced facts, deterministic results, model interpretation, assumptions, and unknowns. It must not fabricate missing information. When evidence is insufficient, it should say so explicitly and identify what would be needed to continue. Outputs should be traceable to source material and tool results.

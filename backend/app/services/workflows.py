@@ -93,6 +93,14 @@ class WorkflowService:
                 if unsupported:
                     return self._save_run(_failed(workflow, observations, index,
                         f"Saved mappings, rules, and policy evidence are pinned; unsupported overrides: {unsupported}.", started_at), overrides)
+            if any(key.casefold() in {"password", "token", "authorization", "cookie", "api_key", "apikey"} or "secret" in key.casefold() and not key.endswith("_secret_ref") for key in overrides.get(index, {})):
+                return self._save_run(_failed(workflow, observations, index,
+                    "Workflow overrides cannot include secrets.", started_at), overrides)
+            if step.tool.startswith("source.") and any(
+                key in {"password", "headers"} for key in overrides.get(index, {})
+            ):
+                return self._save_run(_failed(workflow, observations, index,
+                    "External-source credentials are not overridable; use the configured secret reference.", started_at), overrides)
             try:
                 validated = tool.input_model.model_validate(arguments)
                 if step.expected_columns is not None:

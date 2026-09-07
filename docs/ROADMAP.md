@@ -28,6 +28,7 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add tests for transformation, aggregation, join diagnostics, validation failures, and artifact read-back.
 - [ ] Implement broader calculation, validation, provenance, and evaluation behavior.
 - [x] Add Transform-to-Template V1 with typed target/source inspection, deterministic mapping proposals, explicit ambiguity/missing/type states, safe joins/derivations, exact CSV/XLSX output, reopen validation, provenance, reusable drift-checked workflows, task-scoped agent tools, a focused UI, canonical fixtures, and an 18-case controlled evaluation.
+- [x] Add bounded JSON/Parquet/TXT adapters and read-only PostgreSQL plus GET-only REST connectors with SSRF/SQL safety, secret references, provenance, task-scoped tools, and a dedicated evaluation family.
 - Measure correctness, failure behavior, performance, and cost where applicable.
 
 ### Milestone 2 — Retrieval and knowledge foundation

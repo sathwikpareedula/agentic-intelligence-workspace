@@ -32,6 +32,7 @@ class Settings:
     orchestrator_timeout_seconds: float
     orchestrator_max_retries: int
     orchestrator_max_output_tokens: int
+    allow_private_rest_targets: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -55,6 +56,7 @@ class Settings:
             orchestrator_timeout_seconds=_positive_float("ORCHESTRATOR_TIMEOUT_SECONDS", 30.0),
             orchestrator_max_retries=_non_negative_int("ORCHESTRATOR_MAX_RETRIES", 2),
             orchestrator_max_output_tokens=_positive_int("ORCHESTRATOR_MAX_OUTPUT_TOKENS", 3000),
+            allow_private_rest_targets=os.getenv("ALLOW_PRIVATE_REST_TARGETS", "").strip() == "1",
         )
         if settings.chunk_overlap >= settings.chunk_size:
             raise ConfigurationError("RETRIEVAL_CHUNK_OVERLAP must be smaller than RETRIEVAL_CHUNK_SIZE.")

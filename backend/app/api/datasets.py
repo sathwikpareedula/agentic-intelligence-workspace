@@ -16,10 +16,10 @@ from app.services.datasets import (
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
-async def _read_upload(file: UploadFile, sheet: str | None):
+async def _read_upload(file: UploadFile, sheet: str | None, records_key: str | None = None):
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     try:
-        return load_dataset(file.filename or "", content, sheet)
+        return load_dataset(file.filename or "", content, sheet, records_key)
     except UnsupportedFileTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
     except DatasetTooLargeError as exc:
@@ -34,8 +34,9 @@ async def _read_upload(file: UploadFile, sheet: str | None):
 async def inspect_uploaded_dataset(
     file: UploadFile = File(...),
     sheet: str | None = Form(default=None),
+    records_key: str | None = Form(default=None),
 ) -> DatasetInspection:
-    dataset = await _read_upload(file, sheet)
+    dataset = await _read_upload(file, sheet, records_key)
     return inspect_dataset(dataset)
 
 
@@ -43,6 +44,7 @@ async def inspect_uploaded_dataset(
 async def profile_uploaded_dataset(
     file: UploadFile = File(...),
     sheet: str | None = Form(default=None),
+    records_key: str | None = Form(default=None),
 ) -> DatasetProfile:
-    dataset = await _read_upload(file, sheet)
+    dataset = await _read_upload(file, sheet, records_key)
     return profile_dataset(dataset)

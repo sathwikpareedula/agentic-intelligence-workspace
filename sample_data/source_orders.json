@@ -1,0 +1,16 @@
+{
+  "records": [
+    {
+      "order_id": "O-1001",
+      "customer_name": "Ada Lovelace",
+      "region": "North",
+      "amount": 1000
+    },
+    {
+      "order_id": "O-1002",
+      "customer_name": "Grace Hopper",
+      "region": "South",
+      "amount": 750
+    }
+  ]
+}

@@ -110,3 +110,55 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
                 "DELETE FROM documents WHERE id = ANY(%s)",
                 ([first_document.document_id, second_document.document_id],),
             )
+
+
+@pytest.mark.skipif(
+    os.getenv("ALLOW_DATABASE_INTEGRATION_TESTS") != "1" or not os.getenv("TEST_DATABASE_URL"),
+    reason="Set ALLOW_DATABASE_INTEGRATION_TESTS=1 and TEST_DATABASE_URL for an isolated project test database.",
+)
+def test_external_postgres_connector_is_read_only_and_importable() -> None:
+    from urllib.parse import urlparse
+
+    from app.models.sources import PostgresTableRef
+    from app.services.postgres_source import import_source, list_catalog, validate_select
+    from app.models.sources import PostgresImportRequest, PostgresSourceConfig
+
+    database_url = os.environ["TEST_DATABASE_URL"]
+    parsed = urlparse(database_url)
+    password = parsed.password or ""
+    os.environ["EXTERNAL_PG_PASSWORD"] = password
+    with psycopg.connect(database_url) as connection:
+        connection.execute("CREATE SCHEMA IF NOT EXISTS external_demo")
+        connection.execute("DROP TABLE IF EXISTS external_demo.orders")
+        connection.execute(
+            "CREATE TABLE external_demo.orders (order_id text PRIMARY KEY, customer_name text, amount numeric)"
+        )
+        connection.execute("INSERT INTO external_demo.orders VALUES ('O-1', 'Ada', 10)")
+        connection.commit()
+    config = PostgresSourceConfig(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 5432,
+        database=parsed.path.lstrip("/"),
+        user=parsed.username or "postgres",
+        password_secret_ref="EXTERNAL_PG_PASSWORD",
+        sslmode="disable",
+    )
+    try:
+        catalog = list_catalog(config)
+        names = {(item.schema_name, item.name) for item in catalog.tables}
+        assert ("external_demo", "orders") in names
+        imported = import_source(
+            PostgresImportRequest(source=config, table=PostgresTableRef(schema="external_demo", table="orders"))
+        )
+        assert imported.inspection.row_count == 1
+        assert imported.provenance.source_type == "postgres"
+        assert password not in imported.model_dump_json()
+        with pytest.raises(Exception):
+            validate_select("INSERT INTO external_demo.orders VALUES ('x')")
+        with pytest.raises(Exception):
+            import_source(PostgresImportRequest(source=config, select_sql="INSERT INTO external_demo.orders VALUES ('x')"))
+    finally:
+        os.environ.pop("EXTERNAL_PG_PASSWORD", None)
+        with psycopg.connect(database_url) as connection:
+            connection.execute("DROP TABLE IF EXISTS external_demo.orders")
+            connection.commit()

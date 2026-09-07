@@ -90,7 +90,7 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function WorkspacePage() {
-  const [demo, setDemo] = useState<"grades" | "sales" | "template">("sales");
+  const [demo, setDemo] = useState<"grades" | "sales" | "template" | "sources">("sales");
   const [goal, setGoal] = useState("Prepare the August sales report. Clean transactions, compare regional targets, identify the largest shortfalls, calculate policy-based commissions, and export a management workbook while preserving the originals.");
   const [dataset, setDataset] = useState<File | null>(null);
   const [document, setDocument] = useState<File | null>(null);
@@ -108,6 +108,18 @@ export default function WorkspacePage() {
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sourceKind, setSourceKind] = useState<"upload" | "postgres" | "rest">("upload");
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [sourceResult, setSourceResult] = useState<Record<string, unknown> | null>(null);
+  const [pgHost, setPgHost] = useState("127.0.0.1");
+  const [pgPort, setPgPort] = useState("5432");
+  const [pgDatabase, setPgDatabase] = useState("");
+  const [pgUser, setPgUser] = useState("");
+  const [pgSecretRef, setPgSecretRef] = useState("EXTERNAL_PG_PASSWORD");
+  const [pgSchema, setPgSchema] = useState("external_demo");
+  const [pgTable, setPgTable] = useState("orders");
+  const [restUrl, setRestUrl] = useState("");
+  const [restSecretRef, setRestSecretRef] = useState("REST_BEARER_TOKEN");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -142,6 +154,7 @@ export default function WorkspacePage() {
 
   async function runTask(event: FormEvent) {
     event.preventDefault();
+    if (demo === "sources") return;
     if (busy || !dataset || !document || (demo === "sales" && (!customers || !targets)) || (demo === "template" && (!customers || !templateTarget)) || !goal.trim() || runtime?.status !== "ready") return;
     setBusy(true);
     setError(null);
@@ -233,14 +246,66 @@ export default function WorkspacePage() {
     }
   }
 
-  const hasInputs = Boolean(dataset && document && (
-    demo === "grades" || (demo === "sales" && customers && targets) || (demo === "template" && customers && templateTarget)
-  ));
+  async function importBoundSource() {
+    setBusy(true);
+    setError(null);
+    setSourceResult(null);
+    setPhase("Importing bounded source");
+    try {
+      if (sourceKind === "upload") {
+        if (!sourceFile) throw new Error("Select a JSON, Parquet, or TXT file.");
+        const body = new FormData();
+        body.append("file", sourceFile);
+        const path = sourceFile.name.toLowerCase().endsWith(".txt") ? "/documents" : "/datasets/inspect";
+        const result = await apiJson<Record<string, unknown>>(await fetch(`${API}${path}`, { method: "POST", body }));
+        setSourceResult(result);
+        return;
+      }
+      if (sourceKind === "postgres") {
+        const result = await apiJson<Record<string, unknown>>(await fetch(`${API}/sources/postgres/import`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            source: {
+              host: pgHost,
+              port: Number(pgPort),
+              database: pgDatabase,
+              user: pgUser,
+              password_secret_ref: pgSecretRef,
+            },
+            table: { schema: pgSchema, table: pgTable },
+          }),
+        }));
+        setSourceResult(result);
+        return;
+      }
+      const result = await apiJson<Record<string, unknown>>(await fetch(`${API}/sources/rest/import`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source: {
+            url: restUrl,
+            header_secret_refs: restSecretRef.trim() ? { Authorization: restSecretRef.trim() } : {},
+          },
+        }),
+      }));
+      setSourceResult(result);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Source import failed");
+    } finally {
+      setBusy(false);
+      setPhase(null);
+    }
+  }
+
   const selectedTemplatePlan = canonicalTemplatePlan(templateProposal);
   const derivedTargets = new Set(selectedTemplatePlan?.derivations.map((item) => item.target_field) ?? []);
   const unresolvedTemplateFields = templateProposal?.clarifications.filter((item) => !derivedTargets.has(item.target_field)) ?? [];
   const mappingOverridesComplete = unresolvedTemplateFields.every((item) => Boolean(mappingOverrides[item.target_field]?.trim()));
-  const canRun = Boolean(hasInputs && goal.trim() && runtime?.status === "ready" && !busy && (demo !== "template" || !templateProposal || unresolvedTemplateFields.length === 0));
+  const hasInputs = Boolean(dataset && document && (
+    demo === "grades" || (demo === "sales" && customers && targets) || (demo === "template" && customers && templateTarget)
+  ));
+  const canRun = Boolean(demo !== "sources" && hasInputs && goal.trim() && runtime?.status === "ready" && !busy && (demo !== "template" || !templateProposal || unresolvedTemplateFields.length === 0));
   const runtimeLabel = runtime
     ? runtime.orchestrator_status === "demo"
       ? "Demo provider"
@@ -264,20 +329,25 @@ export default function WorkspacePage() {
       <section className="composer">
         <label htmlFor="demo">Demonstration workflow</label>
         <select id="demo" className="modePicker" value={demo} disabled={busy} onChange={(event) => {
-          const next = event.target.value as "grades" | "sales" | "template";
+          const next = event.target.value as "grades" | "sales" | "template" | "sources";
           setDemo(next);
           setGoal(next === "grades"
             ? "According to the grading policy, what score do I need on my final to finish with an A?"
             : next === "template"
               ? "Prepare this month's submission in the supplied template. Preserve its structure, derive net sales, apply the documented commission policy, verify the output, and save a reusable workflow."
+              : next === "sources"
+                ? "Import a bounded JSON, Parquet, PostgreSQL, or REST source into the existing dataset tools without storing secrets in the browser."
               : "Prepare the August sales report. Clean the transaction data, compare performance against targets by region, identify the largest drivers of underperformance, calculate salesperson commissions according to the policy, generate appropriate charts, and export a management workbook while preserving the original data.");
           setDataset(null); setDocument(null); setCustomers(null); setTargets(null); setExecution(null);
           setTemplateTarget(null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({});
+          setSourceResult(null); setSourceFile(null);
           setDatasetInfo("No dataset selected"); setDocumentInfo("No document selected");
-        }}><option value="grades">Grades + syllabus</option><option value="sales">August sales report</option><option value="template">Transform to supplied template</option></select>
+        }}><option value="grades">Grades + syllabus</option><option value="sales">August sales report</option><option value="template">Transform to supplied template</option><option value="sources">External and file sources</option></select>
+        {demo === "sources" && <p className="sourceNote">Passwords and tokens stay in server environment variables. This UI only sends secret reference names, never raw credentials.</p>}
         {(demo === "sales" || demo === "template") && <div className="promise" aria-label="Workflow outcomes"><span>01 · Inspect & map</span><span>02 · Transform & derive</span><span>03 · Verify & export</span></div>}
         <label htmlFor="goal">What should the workspace accomplish?</label>
         <textarea id="goal" value={goal} onChange={(event) => setGoal(event.target.value)} required maxLength={10000} />
+        {demo !== "sources" && <>
         <div className="uploads">
           <label className="upload">{demo === "grades" ? "Structured grade data" : demo === "template" ? "Raw orders" : "August transactions"}<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setDataset(event.target.files?.[0] ?? null); setDatasetInfo("Awaiting inspection"); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{dataset?.name ?? datasetInfo}</small></label>
           <label className="upload">{demo === "grades" ? "Grading policy PDF" : demo === "template" ? "Reporting policy PDF" : "Commission policy PDF"}<input type="file" accept=".pdf,application/pdf" disabled={busy} onChange={(event) => { setDocument(event.target.files?.[0] ?? null); setDocumentInfo("Awaiting ingestion"); setTemplateResult(null); }} /><small>{document?.name ?? documentInfo}</small></label>
@@ -285,12 +355,40 @@ export default function WorkspacePage() {
           {demo === "template" && <><label className="upload">Customer master<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setCustomers(event.target.files?.[0] ?? null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{customers?.name ?? "No customer master selected"}</small></label><label className="upload">Required target template<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setTemplateTarget(event.target.files?.[0] ?? null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{templateTarget?.name ?? "No target template selected"}</small></label></>}
         </div>
         <button disabled={!canRun} title={runtime?.status === "not_ready" ? "Complete backend configuration before running tasks" : unresolvedTemplateFields.length ? "Resolve required fields before execution" : undefined}>{busy ? phase ?? "Executing workflow…" : demo === "template" ? templateProposal ? "Execute verified template transform" : "Inspect and propose mappings" : demo === "sales" ? "Build verified August report" : "Run verified task"}</button>
+        </>}
+        {demo === "sources" && <div>
+          <label htmlFor="sourceKind">Source type</label>
+          <select id="sourceKind" className="modePicker" value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "upload" | "postgres" | "rest")}>
+            <option value="upload">Upload JSON / Parquet / TXT</option>
+            <option value="postgres">PostgreSQL (secret reference)</option>
+            <option value="rest">REST JSON (secret reference)</option>
+          </select>
+          {sourceKind === "upload" && <label className="upload">Structured or text file<input type="file" accept=".json,.parquet,.pq,.txt" disabled={busy} onChange={(event) => setSourceFile(event.target.files?.[0] ?? null)} /><small>{sourceFile?.name ?? "No file selected"}</small></label>}
+          {sourceKind === "postgres" && <div className="sourceGrid">
+            <label>Host<input value={pgHost} onChange={(event) => setPgHost(event.target.value)} /></label>
+            <label>Port<input value={pgPort} onChange={(event) => setPgPort(event.target.value)} /></label>
+            <label>Database<input value={pgDatabase} onChange={(event) => setPgDatabase(event.target.value)} /></label>
+            <label>User<input value={pgUser} onChange={(event) => setPgUser(event.target.value)} /></label>
+            <label>Password secret ref<input value={pgSecretRef} onChange={(event) => setPgSecretRef(event.target.value)} autoComplete="off" /></label>
+            <label>Schema<input value={pgSchema} onChange={(event) => setPgSchema(event.target.value)} /></label>
+            <label>Table<input value={pgTable} onChange={(event) => setPgTable(event.target.value)} /></label>
+          </div>}
+          {sourceKind === "rest" && <div className="sourceGrid">
+            <label>HTTPS URL<input value={restUrl} onChange={(event) => setRestUrl(event.target.value)} /></label>
+            <label>Authorization secret ref<input value={restSecretRef} onChange={(event) => setRestSecretRef(event.target.value)} autoComplete="off" /></label>
+          </div>}
+          <button type="button" disabled={busy || runtime?.status !== "ready"} onClick={importBoundSource}>{busy ? phase ?? "Importing…" : "Import source"}</button>
+        </div>}
         {busy && <p className="progress" role="status" aria-live="polite"><span />{phase ?? "Executing bounded workflow"}. Source uploads remain unchanged.</p>}
-        {!hasInputs ? <p className="hint">Select all required sample inputs to enable the task.</p> : null}
+        {demo !== "sources" && !hasInputs ? <p className="hint">Select all required sample inputs to enable the task.</p> : null}
         {error && <p className="error" role="alert">{error}</p>}
       </section>
     </form>
-    {demo === "template" ? <div className="results">
+    {demo === "sources" ? <div className="results">
+      <section className="panel answer"><div className="panelTitle"><h2>Imported source</h2><span className={`pill ${sourceResult ? "verified" : "idle"}`}>{sourceResult ? "imported" : "Awaiting import"}</span></div>
+        {sourceResult ? <pre className="sourceNote">{JSON.stringify(sourceResult, null, 2)}</pre> : <p>JSON and Parquet become inspectable datasets. TXT is chunked through the existing retrieval pipeline. PostgreSQL and REST imports require server-side secret references.</p>}
+      </section>
+    </div> : demo === "template" ? <div className="results">
       <section className="panel answer"><div className="panelTitle"><h2>Field mapping plan</h2><span className={`pill ${templateResult?.status ?? templateProposal?.status ?? "idle"}`}>{templateResult?.status?.replaceAll("_", " ") ?? templateProposal?.status?.replaceAll("_", " ") ?? "Awaiting inspection"}</span></div>
         {templateProposal ? <><p className="templateSummary">Target: {templateProposal.plan.target_filename} · {templateProposal.plan.target_headers.length} columns · {templateProposal.template.sheets.length || 1} sheet(s)</p>{isCanonicalFixtureProposal(templateProposal) && <p className="fixtureNote">Canonical demo rules detected: customer join, net-sales calculation, and evidence-bound commission derivation are applied only to the shipped sample schemas.</p>}<div className="mappingTable" role="table" aria-label="Proposed field mappings">{templateProposal.plan.mappings.map((mapping) => <div className="mappingRow" role="row" key={mapping.target_field}><strong>{mapping.target_field}</strong><span>{derivedTargets.has(mapping.target_field) ? "Deterministic derivation" : mapping.mapping_type === "template_formula" ? "Trusted template formula" : mapping.source_role && mapping.source_field ? `${mapping.source_role}.${mapping.source_field}` : "Unresolved"}</span><span className={`pill ${derivedTargets.has(mapping.target_field) ? "verified" : mapping.status}`}>{derivedTargets.has(mapping.target_field) ? "derived" : mapping.status.replaceAll("_", " ")}</span><small>{Math.round(mapping.confidence * 100)}% · {mapping.evidence}</small></div>)}</div></> : <p>Upload the raw orders, customer master, reporting policy, and target workbook to inspect schemas and propose mappings.</p>}
         {unresolvedTemplateFields.length > 0 && <div className="warnings clarification"><strong>Clarification required</strong><p>Confirm each source as <code>role.field</code>. Nothing executes until every required field is resolved.</p><div className="clarificationGrid">{unresolvedTemplateFields.map((item) => <label key={item.target_field}><span>{item.target_field}</span><input value={mappingOverrides[item.target_field] ?? ""} placeholder={item.candidate_options[0] ?? "role.field"} disabled={busy} onChange={(event) => setMappingOverrides((current) => ({ ...current, [item.target_field]: event.target.value }))} /><small>{item.reason}{item.candidate_options.length ? ` Options: ${item.candidate_options.join(", ")}` : ""}</small></label>)}</div><button type="button" className="confirmMappings" disabled={busy || !mappingOverridesComplete} onClick={confirmTemplateMappings}>Validate confirmed mappings</button></div>}

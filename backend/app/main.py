@@ -21,6 +21,7 @@ from app.api.sales import router as sales_router
 from app.api.transformations import router as transformations_router
 from app.api.workflows import router as workflows_router
 from app.api.template_transforms import router as template_transforms_router
+from app.api.sources import router as sources_router
 app = FastAPI(title="Agentic Intelligence Workspace")
 app.state.artifact_repository = None
 app.state.workflow_service = None
@@ -115,3 +116,4 @@ app.include_router(retrieval_router)
 app.include_router(sales_router)
 app.include_router(workflows_router)
 app.include_router(template_transforms_router)
+app.include_router(sources_router)

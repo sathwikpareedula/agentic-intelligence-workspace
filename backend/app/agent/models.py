@@ -155,13 +155,21 @@ class AgentTaskResources(StrictModel):
     datasets: list[AgentDatasetResource] = Field(default_factory=list, max_length=8)
     document_ids: list[UUID] = Field(default_factory=list, max_length=8)
     workflow_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    postgres_sources: list["AgentPostgresSource"] = Field(default_factory=list, max_length=4)
+    rest_sources: list["AgentRestSource"] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def validate_resources(self) -> "AgentTaskResources":
         datasets = self.all_datasets()
         document_ids = self.all_document_ids()
-        if not datasets and not document_ids and not self.workflow_ids:
-            raise ValueError("Provide at least one dataset, document ID, or workflow ID.")
+        if (
+            not datasets
+            and not document_ids
+            and not self.workflow_ids
+            and not self.postgres_sources
+            and not self.rest_sources
+        ):
+            raise ValueError("Provide at least one dataset, document ID, workflow ID, or bound external source.")
         if len(datasets) > 8:
             raise ValueError("An agent task may bind at most 8 datasets.")
         if sum(len(item.content_base64) for item in datasets) > 56_000_000:
@@ -175,6 +183,10 @@ class AgentTaskResources(StrictModel):
             raise ValueError("Document IDs must be unique within an agent task.")
         if len(self.workflow_ids) != len(set(self.workflow_ids)):
             raise ValueError("Workflow IDs must be unique within an agent task.")
+        pg_names = [item.name for item in self.postgres_sources]
+        rest_names = [item.name for item in self.rest_sources]
+        if len(pg_names) != len(set(pg_names)) or len(rest_names) != len(set(rest_names)):
+            raise ValueError("Bound external source names must be unique.")
         return self
 
     def all_datasets(self) -> list[AgentDatasetResource]:
@@ -191,6 +203,8 @@ class AgentTaskResources(StrictModel):
             and not self.datasets
             and not self.document_ids
             and not self.workflow_ids
+            and not self.postgres_sources
+            and not self.rest_sources
         )
 
     @property
@@ -201,4 +215,27 @@ class AgentTaskResources(StrictModel):
             and len(self.datasets) == 3
             and len(self.document_ids) == 1
             and not self.workflow_ids
+            and not self.postgres_sources
+            and not self.rest_sources
         )
+
+
+class AgentPostgresSource(StrictModel):
+    name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=5432, ge=1, le=65535)
+    database: str = Field(min_length=1, max_length=63)
+    user: str = Field(min_length=1, max_length=63)
+    password_secret_ref: str = Field(min_length=1, max_length=100, pattern=r"^[A-Z][A-Z0-9_]*$")
+    sslmode: str = Field(default="prefer", max_length=20)
+
+
+class AgentRestSource(StrictModel):
+    name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    url: str = Field(min_length=8, max_length=2000)
+    header_secret_refs: dict[str, str] = Field(default_factory=dict, max_length=10)
+    query: dict[str, str] = Field(default_factory=dict, max_length=20)
+    records_key: str | None = Field(default=None, max_length=100)
+
+
+AgentTaskResources.model_rebuild()

@@ -88,6 +88,7 @@ def execute_agent_task(
             payload.resources,
             artifact_repository,
             get_workflow_service(settings),
+            settings.allow_private_rest_targets,
         )
         if payload.resources.is_legacy_grades_demo:
             assert payload.resources.dataset is not None

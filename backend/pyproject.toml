@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.10,<3",
     "pypdf>=6,<7",
     "python-multipart>=0.0.20,<1",
+    "pyarrow>=17,<23",
     "uvicorn>=0.34,<1",
 ]
 
@@ -32,6 +33,7 @@ retrieval-eval = "app.evaluation.retrieval:main"
 product-eval = "app.evaluation.product:main"
 agent-eval = "app.evaluation.agent:main"
 template-transform-eval = "app.evaluation.template_transform:main"
+sources-eval = "app.evaluation.sources:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

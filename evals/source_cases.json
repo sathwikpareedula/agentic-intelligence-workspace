@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {"id": "A_json_import", "name": "JSON import"},
+    {"id": "B_json_ambiguity_refusal", "name": "JSON ambiguity refusal"},
+    {"id": "C_parquet_import", "name": "Parquet import"},
+    {"id": "D_txt_retrieval", "name": "TXT retrieval"},
+    {"id": "E_postgres_metadata", "name": "Postgres metadata"},
+    {"id": "F_postgres_safe_read", "name": "Postgres safe read"},
+    {"id": "G_postgres_destructive_sql_refusal", "name": "Postgres destructive SQL refusal"},
+    {"id": "H_postgres_multi_statement_refusal", "name": "Postgres multi-statement refusal"},
+    {"id": "I_postgres_credential_redaction", "name": "Postgres credential redaction"},
+    {"id": "J_rest_import", "name": "REST import"},
+    {"id": "K_rest_private_network_refusal", "name": "REST private-network refusal"},
+    {"id": "L_rest_invalid_content_type", "name": "REST invalid content type"},
+    {"id": "M_rest_oversized_response", "name": "REST oversized response"},
+    {"id": "N_rest_secret_redaction", "name": "REST secret redaction"},
+    {"id": "O_provenance_completeness", "name": "Provenance completeness"},
+    {"id": "P_workflow_secret_omission", "name": "Workflow secret omission"},
+    {"id": "Q_external_source_template_integration", "name": "External source to template integration"}
+  ]
+}

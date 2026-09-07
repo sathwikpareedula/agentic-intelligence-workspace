@@ -34,6 +34,7 @@ Bounded execution, mixed reasoning, verification, workflows, artifacts, sales an
 - 2026-09-04: Added controlled generalized-agent evaluation and tests for malformed provider output, timeout/failure mapping, invalid arguments, replanning, iteration limits, mixed structured/unstructured tasks, artifacts, workflows, and insufficient evidence.
 - 2026-09-06: Added Transform-to-Template V1 with typed CSV/XLSX target inspection, source profiling/key candidates, deterministic mapping proposals, structured clarification/refusal, guarded joins and derivations, evidence-bound policy rates, exact template writing/reopen validation, per-field provenance, reusable drift-checked workflows, task-scoped agent tools, public multipart APIs, focused frontend workflow, canonical fixtures, and an 18-case controlled evaluation.
 - 2026-09-07: Completed Phase 1 Transform-to-Template integration with user-confirmed mapping controls, fixture-scoped demo rules, formula-origin-aware translation and reopen verification, confirmed mapping persistence, CI evaluation coverage, responsive browser QA, and final backend/frontend/security gates.
+- 2026-09-07: Added Phase 2 bounded JSON/Parquet/TXT adapters, a read-only external PostgreSQL connector, and a GET-only REST JSON connector with SSRF checks, secret references, provenance, task-scoped tools, source evaluation cases, and a minimal source UI. DOCX was deferred.
 
 ## Technologies Actually Used
 
@@ -70,9 +71,9 @@ Material decisions should receive a record under `docs/decisions/`.
 
 ## Evaluation Results
 
-- Backend test suite: 132 tests passed, 1 opt-in live PostgreSQL integration test skipped, and 2 framework deprecation warnings were reported.
+- Backend test suite: 149 tests passed excluding the opt-in live PostgreSQL integration test, with 2 framework deprecation warnings. Live Postgres connector evaluation cases remain deferred without TEST_DATABASE_URL.
 - Controlled offline retrieval evaluation: 5 queries at `top_k=2`, Hit@2 = 1.0 and mean reciprocal rank = 1.0. This measures the fixed token-hash test corpus, not hosted embedding quality or production recall.
-- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Controlled north-star evaluation: 14/14 cases passed. Controlled Transform-to-Template evaluation: 18/18 cases passed. These offline evaluations do not measure hosted-model quality, latency, or cost.
+- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Controlled north-star evaluation: 14/14 cases passed. Controlled Transform-to-Template evaluation: 18/18 cases passed. Controlled source/connector evaluation: 15/17 local cases passed with E/F deferred without TEST_DATABASE_URL. These offline evaluations do not measure hosted-model quality, latency, or cost.
 - Frontend verification: TypeScript passed, the Next.js 16.3.4 optimized production build passed, and `npm audit --audit-level=high` reported zero vulnerabilities without changing `package.json` or `package-lock.json`.
 - Browser verification: the canonical Transform-to-Template fixture completed through the live local UI with proposal visibility, 13 passing validation checks, policy provenance, workbook download, and saved-workflow visibility; the narrow responsive layout was visually checked.
 - Workbook verification: the generated canonical artifact reopened in both the backend validation and the spreadsheet inspection runtime, preserved both sheets and their order, retained translated formulas in `F2:F4`, neutralized the formula-like customer value, and rendered both worksheets for visual review.
@@ -86,7 +87,7 @@ No performance measurements have been run yet.
 ## Security Decisions
 
 - Security risks and design requirements are tracked from the engineering-foundation phase.
-- Dataset uploads are limited to 10 MiB, processed in memory without permanent persistence, restricted to `.csv` and `.xlsx`, and parsed without executing formulas, macros, or uploaded code.
+- Dataset uploads are limited to 10 MiB, processed in memory without permanent persistence, restricted to `.csv`, `.xlsx`, `.json`, and `.parquet`, and parsed without executing formulas, macros, or uploaded code. UTF-8 `.txt` documents reuse retrieval chunking as untrusted evidence.
 - Transformation requests use a closed typed operation set with unknown fields rejected; no arbitrary Python or SQL execution is available.
 - Exported artifacts remain request-scoped in memory and use service-generated sanitized filenames rather than user-controlled filesystem paths.
 - Formula-like text is neutralized during CSV/XLSX export to prevent uploaded strings from becoming active spreadsheet formulas.

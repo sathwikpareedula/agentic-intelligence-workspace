@@ -24,7 +24,13 @@ This is an early threat checklist. Every item below is a risk or design requirem
 
 - Risk: model-generated SQL may expose, corrupt, or delete data or consume excessive resources.
 - Design requirements: avoid unrestricted execution; use typed query operations or validated constrained SQL, parameterization, least-privilege roles, read-only defaults, resource limits, and explicit confirmation for mutations.
-- Current status: no SQL execution capability or DuckDB dependency is present; analytics use typed deterministic pandas operations.
+- Current status: analytics still use typed pandas. The external PostgreSQL connector additionally allows a single validated WITH/SELECT or identifier-quoted table read inside a `READ ONLY` session. INSERT/UPDATE/DELETE/DDL/COPY/multi-statements, locking `SELECT FOR UPDATE/SHARE`, `ANALYZE`, and session-mutating functions such as `set_config` are rejected. This is not natural-language SQL and not a query engine over the application database.
+
+### SSRF (REST connector)
+
+- Risk: a user- or model-supplied URL may reach loopback, RFC1918, link-local, CGNAT, metadata, or other non-public targets, including via redirects, IPv4-mapped IPv6, trailing-dot hostnames, or DNS rebinding.
+- Implemented: GET-only http/https, no embedded credentials, hostname denylist for metadata/`.internal`, IP classification after unwrapping IPv4-mapped addresses, blocked private/loopback/link-local/CGNAT/unspecified/multicast/metadata ranges, HTTPS required unless `ALLOW_PRIVATE_REST_TARGETS=1`, every redirect target revalidated, and TCP connects pinned to the resolved IP while SNI/Host stay on the original hostname. Cross-origin redirects with secret-bearing headers fail closed instead of forwarding Authorization/Cookie/API keys.
+- Residual: this is not a custom DNS stack. The connector pins the address returned by `getaddrinfo` at request time; it does not implement Happy Eyeballs across later addresses or a separate DNS-over-HTTPS resolver.
 
 ### Generated Python
 
@@ -66,6 +72,7 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - Implemented: strict Pydantic tool contracts, explicit unknown/invalid-tool observations, trace body redaction, bounded loops, and no arbitrary code/SQL/shell tool.
 - Production agent tools are created per task and accept only bound dataset filenames, document IDs, and workflow IDs. Uploaded dataset bodies remain server-side and are not placed in model prompts or traces.
 - Task-scoped template tools require prior inspection of every selected resource. Saved template recipes pin mappings, transformation rules, and policy evidence; reruns can replace only source/template payloads and fail on role, schema, or structural template drift.
+- External PostgreSQL and REST tools accept secret *references* (environment variable names), never raw passwords or tokens. Workflow recipes persist host/database/table or sanitized URL plus secret-ref names. REST blocks loopback/private/metadata targets unless `ALLOW_PRIVATE_REST_TARGETS=1`. Agent tools can only use sources bound to the task.
 
 ### Malicious Documents
 

@@ -216,7 +216,7 @@ def test_document_api_ingests_and_searches_with_provenance(retrieval_client) -> 
 
 def test_document_api_errors_are_clear(retrieval_client) -> None:
     unsupported = retrieval_client.post(
-        "/documents", files={"file": ("notes.txt", b"hello", "text/plain")}
+        "/documents", files={"file": ("notes.docx", b"hello", "application/octet-stream")}
     )
     malformed = retrieval_client.post(
         "/documents", files={"file": ("bad.pdf", b"%PDF-bad", "application/pdf")}

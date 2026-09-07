@@ -48,6 +48,6 @@ Desktop.ini
 *.temp
 .cache/
 /backend/var/
-
+.pytest-tmp/
 
 *.tsbuildinfo

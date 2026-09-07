@@ -22,6 +22,7 @@ from app.models.template_transforms import (
     TransformProposalRequest,
     TransformTemplatePlan,
 )
+from app.models.sources import PostgresImportRequest, PostgresSourceConfig, RestSourceConfig
 from app.services.datasets import inspect_dataset, load_dataset, profile_dataset
 from app.services.retrieval import RetrievalService
 from app.services.grades import calculate_required_final
@@ -29,6 +30,8 @@ from app.services.artifacts import ArtifactRepository, generate_artifact
 from app.services.sales_report import build_august_sales_report
 from app.services.transformations import apply_transformations, dataframe_result, join_datasets
 from app.services.template_transforms import execute_transform, propose_transform
+from app.services.postgres_source import import_source as import_postgres, inspect_table, list_catalog, test_connection
+from app.services.rest_source import import_rest
 
 if TYPE_CHECKING:
     from app.services.workflows import WorkflowService
@@ -185,6 +188,16 @@ class BoundTemplateExecuteInput(ToolInput):
     policy_evidence: list[PolicyEvidence] = Field(default_factory=list, max_length=20)
 
 
+class BoundNamedSourceInput(ToolInput):
+    source: str = Field(min_length=1, max_length=100)
+
+
+class BoundPostgresImportInput(BoundNamedSourceInput):
+    schema_name: str | None = Field(default=None, max_length=63, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    table: str | None = Field(default=None, max_length=63, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    select_sql: str | None = Field(default=None, max_length=4000)
+
+
 def dataset_tools() -> list[TypedTool[Any]]:
     def inspect(arguments: DatasetInput) -> ToolObservation:
         dataset = load_dataset(arguments.filename, arguments.content(), arguments.sheet)
@@ -206,6 +219,47 @@ def dataset_tools() -> list[TypedTool[Any]]:
         TypedTool("dataset.profile", "Profile deterministic numeric and categorical statistics.", DatasetInput, profile),
         TypedTool("dataset.transform", "Apply the closed set of validated dataframe operations.", TransformInput, transform),
     ]
+
+
+def source_tools(allow_private_rest: bool = False) -> list[TypedTool[Any]]:
+    def postgres_test(arguments: PostgresSourceConfig) -> ToolObservation:
+        result = test_connection(arguments)
+        return ToolObservation(success=True, summary=f"Connected to external database {result['database']} in read-only mode.", result=result)
+
+    def postgres_catalog(arguments: PostgresSourceConfig) -> ToolObservation:
+        catalog = list_catalog(arguments)
+        return ToolObservation(
+            success=True,
+            summary=f"Listed {len(catalog.tables)} tables across {len(catalog.schemas)} schemas.",
+            result=catalog.model_dump(mode="json"),
+        )
+
+    def postgres_import(arguments: PostgresImportRequest) -> ToolObservation:
+        imported = import_postgres(arguments)
+        return _imported_observation(imported, "Imported a read-only PostgreSQL result as a workspace dataset.")
+
+    def rest_import(arguments: RestSourceConfig) -> ToolObservation:
+        imported = import_rest(arguments, allow_private=allow_private_rest)
+        return _imported_observation(imported, "Imported a bounded REST JSON response as a workspace dataset.")
+
+    return [
+        TypedTool("source.postgres.test", "Test a read-only external PostgreSQL source using a password secret reference.", PostgresSourceConfig, postgres_test),
+        TypedTool("source.postgres.catalog", "List non-system schemas/tables from a read-only external PostgreSQL source.", PostgresSourceConfig, postgres_catalog),
+        TypedTool("source.postgres.import", "Import a bounded table or SELECT from a read-only external PostgreSQL source.", PostgresImportRequest, postgres_import),
+        TypedTool("source.rest.import", "GET JSON from an approved REST URL using secret header references, never raw tokens.", RestSourceConfig, rest_import),
+    ]
+
+
+def _imported_observation(imported, summary: str) -> ToolObservation:
+    return ToolObservation(
+        success=True,
+        summary=summary,
+        result={
+            "inspection": imported.inspection.model_dump(mode="json"),
+            "provenance": imported.provenance.model_dump(mode="json"),
+            "dataset": imported.dataset.model_dump(mode="json"),
+        },
+    )
 
 
 def template_transform_tool(artifact_repository: ArtifactRepository) -> TypedTool[TransformExecutionRequest]:
@@ -248,6 +302,7 @@ def general_task_tools(
     resources: AgentTaskResources,
     artifact_repository: ArtifactRepository,
     workflow_service: WorkflowService | None = None,
+    allow_private_rest: bool = False,
 ) -> list[TypedTool[Any]]:
     """Build a general, task-scoped registry that never exposes uploaded bodies to the model."""
 
@@ -268,6 +323,8 @@ def general_task_tools(
                 "datasets": list(datasets),
                 "document_ids": [str(item) for item in document_ids],
                 "workflow_ids": [str(item) for item in resources.workflow_ids],
+                "postgres_sources": [item.name for item in resources.postgres_sources],
+                "rest_sources": [item.name for item in resources.rest_sources],
             },
         )
 
@@ -588,6 +645,85 @@ def general_task_tools(
                     general_sales_report,
                 )
             )
+
+    if resources.postgres_sources:
+        postgres_by_name = {item.name: item for item in resources.postgres_sources}
+
+        def _bound_postgres(name: str) -> PostgresSourceConfig:
+            source = postgres_by_name.get(name)
+            if source is None:
+                raise ValueError("PostgreSQL source is not bound to this task.")
+            return PostgresSourceConfig(
+                host=source.host,
+                port=source.port,
+                database=source.database,
+                user=source.user,
+                password_secret_ref=source.password_secret_ref,
+                sslmode=source.sslmode if source.sslmode in {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"} else "prefer",
+            )
+
+        def postgres_catalog_bound(arguments: BoundNamedSourceInput) -> ToolObservation:
+            catalog = list_catalog(_bound_postgres(arguments.source))
+            return ToolObservation(
+                success=True,
+                summary=f"Listed {len(catalog.tables)} tables from bound PostgreSQL source {arguments.source}.",
+                result=catalog.model_dump(mode="json"),
+            )
+
+        def postgres_import_bound(arguments: BoundPostgresImportInput) -> ToolObservation:
+            from app.models.sources import PostgresTableRef
+
+            table = None
+            if arguments.schema_name and arguments.table:
+                table = PostgresTableRef(schema=arguments.schema_name, table=arguments.table)
+            imported = import_postgres(
+                PostgresImportRequest(source=_bound_postgres(arguments.source), table=table, select_sql=arguments.select_sql)
+            )
+            return _imported_observation(imported, f"Imported a read-only result from bound PostgreSQL source {arguments.source}.")
+
+        tools.extend(
+            [
+                TypedTool(
+                    "source.postgres.catalog",
+                    "List non-system schemas and tables from a PostgreSQL source bound to this task. The model cannot supply credentials.",
+                    BoundNamedSourceInput,
+                    postgres_catalog_bound,
+                ),
+                TypedTool(
+                    "source.postgres.import",
+                    "Import a bound PostgreSQL table or a single validated SELECT into a workspace dataset. Credentials stay server-side.",
+                    BoundPostgresImportInput,
+                    postgres_import_bound,
+                ),
+            ]
+        )
+
+    if resources.rest_sources:
+        rest_by_name = {item.name: item for item in resources.rest_sources}
+
+        def rest_import_bound(arguments: BoundNamedSourceInput) -> ToolObservation:
+            source = rest_by_name.get(arguments.source)
+            if source is None:
+                raise ValueError("REST source is not bound to this task.")
+            imported = import_rest(
+                RestSourceConfig(
+                    url=source.url,
+                    header_secret_refs=source.header_secret_refs,
+                    query=source.query,
+                    records_key=source.records_key,
+                ),
+                allow_private=allow_private_rest,
+            )
+            return _imported_observation(imported, f"Imported JSON from bound REST source {arguments.source}.")
+
+        tools.append(
+            TypedTool(
+                "source.rest.import",
+                "GET JSON from a REST source bound to this task. The model cannot invent URLs or supply raw tokens.",
+                BoundNamedSourceInput,
+                rest_import_bound,
+            )
+        )
 
     if allowed_workflows and workflow_service is not None:
         def run_workflow(arguments: BoundWorkflowRunInput) -> ToolObservation:

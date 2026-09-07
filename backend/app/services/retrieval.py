@@ -10,6 +10,7 @@ from app.models.retrieval import (
 )
 from app.repositories.documents import DocumentRepository, StoredChunk, StoredDocument
 from app.services.pdf_documents import chunk_document, extract_pdf
+from app.services.text_documents import extract_txt
 
 
 class RetrievalService:
@@ -19,7 +20,19 @@ class RetrievalService:
         self._max_pdf_bytes = max_pdf_bytes
 
     def ingest_pdf(self, filename: str, content: bytes, chunk_size: int, overlap: int) -> DocumentIngestionResult:
-        document = extract_pdf(filename, content, self._max_pdf_bytes)
+        return self.ingest_document(filename, content, chunk_size, overlap)
+
+    def ingest_document(self, filename: str, content: bytes, chunk_size: int, overlap: int) -> DocumentIngestionResult:
+        from pathlib import Path
+
+        suffix = Path(filename).suffix.lower()
+        if suffix == ".txt":
+            document = extract_txt(filename, content, self._max_pdf_bytes)
+        else:
+            document = extract_pdf(filename, content, self._max_pdf_bytes)
+        return self._store(document, chunk_size, overlap)
+
+    def _store(self, document, chunk_size: int, overlap: int) -> DocumentIngestionResult:
         chunks = chunk_document(document, chunk_size, overlap)
         embeddings = self._embedding_provider.embed_documents([chunk.text for chunk in chunks])
         validate_embeddings(embeddings, len(chunks), self._embedding_provider.dimension)
