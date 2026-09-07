@@ -22,6 +22,7 @@ from app.models.template_transforms import (
     TransformProposalRequest,
     TransformTemplatePlan,
 )
+from app.models.analytics import AnalyticsPlan, AnalyticsSqlRequest
 from app.models.sources import PostgresImportRequest, PostgresSourceConfig, RestSourceConfig
 from app.services.datasets import inspect_dataset, load_dataset, profile_dataset
 from app.services.retrieval import RetrievalService
@@ -32,6 +33,7 @@ from app.services.transformations import apply_transformations, dataframe_result
 from app.services.template_transforms import execute_transform, propose_transform
 from app.services.postgres_source import import_source as import_postgres, inspect_table, list_catalog, test_connection
 from app.services.rest_source import import_rest
+from app.services.analytics import execute_dataset_analytics, execute_sql_analytics
 
 if TYPE_CHECKING:
     from app.services.workflows import WorkflowService
@@ -89,6 +91,10 @@ class TransformInput(DatasetInput):
     request: TransformRequest
 
 
+class AnalyticsExecuteInput(DatasetInput):
+    plan: AnalyticsPlan
+
+
 class JoinInput(ToolInput):
     left: DatasetInput
     right: DatasetInput
@@ -139,6 +145,10 @@ class BoundDatasetReferenceInput(ToolInput):
 
 class BoundDatasetTransformInput(BoundDatasetReferenceInput):
     operations: list[Transformation] = Field(default_factory=list, max_length=30)
+
+
+class BoundAnalyticsInput(BoundDatasetReferenceInput):
+    plan: AnalyticsPlan
 
 
 class BoundDatasetJoinInput(ToolInput):
@@ -198,6 +208,11 @@ class BoundPostgresImportInput(BoundNamedSourceInput):
     select_sql: str | None = Field(default=None, max_length=4000)
 
 
+class BoundAnalyticsSqlInput(BoundNamedSourceInput):
+    select_sql: str = Field(min_length=12, max_length=4000)
+    max_rows: int | None = Field(default=None, ge=1, le=100_000)
+
+
 def dataset_tools() -> list[TypedTool[Any]]:
     def inspect(arguments: DatasetInput) -> ToolObservation:
         dataset = load_dataset(arguments.filename, arguments.content(), arguments.sheet)
@@ -214,10 +229,16 @@ def dataset_tools() -> list[TypedTool[Any]]:
         result = dataframe_result(apply_transformations(dataset.frame, arguments.request.operations)).model_dump(mode="json")
         return ToolObservation(success=True, summary=f"Transformation produced {result['row_count']} rows.", result=result)
 
+    def analytics(arguments: AnalyticsExecuteInput) -> ToolObservation:
+        dataset = load_dataset(arguments.filename, arguments.content(), arguments.sheet)
+        executed = execute_dataset_analytics(dataset, arguments.plan)
+        return _analytics_observation(executed)
+
     return [
         TypedTool("dataset.inspect", "Inspect a CSV/XLSX schema and quality counts.", DatasetInput, inspect),
         TypedTool("dataset.profile", "Profile deterministic numeric and categorical statistics.", DatasetInput, profile),
         TypedTool("dataset.transform", "Apply the closed set of validated dataframe operations.", TransformInput, transform),
+        TypedTool("analytics.execute", "Execute a typed deterministic analytical plan over an uploaded dataset.", AnalyticsExecuteInput, analytics),
     ]
 
 
@@ -242,12 +263,27 @@ def source_tools(allow_private_rest: bool = False) -> list[TypedTool[Any]]:
         imported = import_rest(arguments, allow_private=allow_private_rest)
         return _imported_observation(imported, "Imported a bounded REST JSON response as a workspace dataset.")
 
+    def analytics_sql(arguments: AnalyticsSqlRequest) -> ToolObservation:
+        executed = execute_sql_analytics(arguments)
+        return _analytics_observation(executed)
+
     return [
         TypedTool("source.postgres.test", "Test a read-only external PostgreSQL source using a password secret reference.", PostgresSourceConfig, postgres_test),
         TypedTool("source.postgres.catalog", "List non-system schemas/tables from a read-only external PostgreSQL source.", PostgresSourceConfig, postgres_catalog),
         TypedTool("source.postgres.import", "Import a bounded table or SELECT from a read-only external PostgreSQL source.", PostgresImportRequest, postgres_import),
         TypedTool("source.rest.import", "GET JSON from an approved REST URL using secret header references, never raw tokens.", RestSourceConfig, rest_import),
+        TypedTool("analytics.sql", "Run one validated read-only SELECT against an external PostgreSQL source using a password secret reference.", AnalyticsSqlRequest, analytics_sql),
     ]
+
+
+def _analytics_observation(executed) -> ToolObservation:
+    payload = executed.model_dump(mode="json")
+    return ToolObservation(
+        success=True,
+        summary=executed.explanation,
+        result=payload,
+        warnings=executed.warnings,
+    )
 
 
 def _imported_observation(imported, summary: str) -> ToolObservation:
@@ -365,6 +401,13 @@ def general_task_tools(
                 summary=f"Deterministic transformation produced {len(frame)} rows and {len(frame.columns)} columns.",
                 result=_bounded_dataframe_result(frame),
             )
+
+        def analytics_bound(arguments: BoundAnalyticsInput) -> ToolObservation:
+            if arguments.dataset not in inspected_datasets:
+                raise ValueError("Inspect the bound dataset before running analytics.")
+            dataset = _load_bound_dataset(datasets, arguments.dataset)
+            executed = execute_dataset_analytics(dataset, arguments.plan)
+            return _analytics_observation(executed)
 
         def join_bound(arguments: BoundDatasetJoinInput) -> ToolObservation:
             frame, diagnostics = _join_bound_datasets(datasets, arguments)
@@ -530,6 +573,12 @@ def general_task_tools(
                     transform_bound,
                 ),
                 TypedTool(
+                    "analytics.execute",
+                    "Execute a typed deterministic analytical plan over one inspected bound dataset. The model cannot invent numbers or run Python.",
+                    BoundAnalyticsInput,
+                    analytics_bound,
+                ),
+                TypedTool(
                     "dataset.join",
                     "Deterministically transform and join two bound datasets, return bounded result rows, and report unmatched rows and row-multiplication diagnostics.",
                     BoundDatasetJoinInput,
@@ -681,6 +730,12 @@ def general_task_tools(
             )
             return _imported_observation(imported, f"Imported a read-only result from bound PostgreSQL source {arguments.source}.")
 
+        def analytics_sql_bound(arguments: BoundAnalyticsSqlInput) -> ToolObservation:
+            executed = execute_sql_analytics(
+                AnalyticsSqlRequest(source=_bound_postgres(arguments.source), select_sql=arguments.select_sql, max_rows=arguments.max_rows)
+            )
+            return _analytics_observation(executed)
+
         tools.extend(
             [
                 TypedTool(
@@ -694,6 +749,12 @@ def general_task_tools(
                     "Import a bound PostgreSQL table or a single validated SELECT into a workspace dataset. Credentials stay server-side.",
                     BoundPostgresImportInput,
                     postgres_import_bound,
+                ),
+                TypedTool(
+                    "analytics.sql",
+                    "Run one validated read-only SELECT against a PostgreSQL source bound to this task. The model cannot supply credentials or write SQL.",
+                    BoundAnalyticsSqlInput,
+                    analytics_sql_bound,
                 ),
             ]
         )

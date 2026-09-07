@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {"id": "A_count", "name": "Count"},
+    {"id": "B_grouped_sum", "name": "Grouped sum"},
+    {"id": "C_mean_median", "name": "Mean and median"},
+    {"id": "D_percent_change", "name": "Percent change"},
+    {"id": "E_target_variance", "name": "Target variance"},
+    {"id": "F_ranking", "name": "Ranking"},
+    {"id": "G_rolling_average", "name": "Rolling average"},
+    {"id": "H_correlation", "name": "Correlation"},
+    {"id": "I_null_handling", "name": "Null handling"},
+    {"id": "J_invalid_type_refusal", "name": "Invalid-type refusal"},
+    {"id": "K_destructive_sql_refusal", "name": "Destructive SQL refusal"},
+    {"id": "L_multi_statement_refusal", "name": "Multi-statement refusal"},
+    {"id": "M_writable_cte_refusal", "name": "Writable CTE refusal"},
+    {"id": "N_exact_deterministic_fact", "name": "Exact deterministic fact"},
+    {"id": "O_grounded_explanation", "name": "Grounded explanation"},
+    {"id": "P_workflow_rerun", "name": "Workflow rerun"},
+    {"id": "Q_schema_drift", "name": "Schema drift"}
+  ]
+}

@@ -56,6 +56,30 @@ type TemplateResult = {
   artifact?: Artifact;
   saved_workflow?: { workflow_id: string; name: string; version: number; rerun_url: string };
 };
+type AnalyticsResult = {
+  status: string;
+  explanation: string;
+  facts: { key: string; metric: string; value: number | null; label: string; calculation: string; grouping: Record<string, string> }[];
+  verification_facts: Record<string, number>;
+  columns: string[];
+  rows: Record<string, string | number | boolean | null>[];
+  row_count: number;
+  plan: Record<string, unknown>;
+};
+const SHORTFALL_PLAN = {
+  analysis: "target_variance",
+  filters: [],
+  group_by: ["region"],
+  metrics: [],
+  value_column: "net_sales",
+  second_column: "target",
+  contributor_column: "salesperson",
+  expected_columns: ["region", "salesperson", "net_sales", "target", "month"],
+  rank_method: "dense",
+  ascending: false,
+  limit: 100,
+  nulls: "exclude",
+};
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -90,7 +114,7 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function WorkspacePage() {
-  const [demo, setDemo] = useState<"grades" | "sales" | "template" | "sources">("sales");
+  const [demo, setDemo] = useState<"grades" | "sales" | "template" | "sources" | "analytics">("sales");
   const [goal, setGoal] = useState("Prepare the August sales report. Clean transactions, compare regional targets, identify the largest shortfalls, calculate policy-based commissions, and export a management workbook while preserving the originals.");
   const [dataset, setDataset] = useState<File | null>(null);
   const [document, setDocument] = useState<File | null>(null);
@@ -111,6 +135,9 @@ export default function WorkspacePage() {
   const [sourceKind, setSourceKind] = useState<"upload" | "postgres" | "rest">("upload");
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [sourceResult, setSourceResult] = useState<Record<string, unknown> | null>(null);
+  const [analyticsFile, setAnalyticsFile] = useState<File | null>(null);
+  const [analyticsResult, setAnalyticsResult] = useState<AnalyticsResult | null>(null);
+  const [analyticsPlan, setAnalyticsPlan] = useState<Record<string, unknown>>(SHORTFALL_PLAN);
   const [pgHost, setPgHost] = useState("127.0.0.1");
   const [pgPort, setPgPort] = useState("5432");
   const [pgDatabase, setPgDatabase] = useState("");
@@ -154,7 +181,7 @@ export default function WorkspacePage() {
 
   async function runTask(event: FormEvent) {
     event.preventDefault();
-    if (demo === "sources") return;
+    if (demo === "sources" || demo === "analytics") return;
     if (busy || !dataset || !document || (demo === "sales" && (!customers || !targets)) || (demo === "template" && (!customers || !templateTarget)) || !goal.trim() || runtime?.status !== "ready") return;
     setBusy(true);
     setError(null);
@@ -298,6 +325,32 @@ export default function WorkspacePage() {
     }
   }
 
+  async function runAnalytics() {
+    if (!analyticsFile || runtime?.status !== "ready") return;
+    setBusy(true);
+    setError(null);
+    setAnalyticsResult(null);
+    setPhase("Validating and executing the typed analytical plan");
+    try {
+      const validated = await apiJson<Record<string, unknown>>(await fetch(`${API}/analytics/validate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(analyticsPlan),
+      }));
+      setAnalyticsPlan(validated);
+      const body = new FormData();
+      body.append("file", analyticsFile);
+      body.append("request", JSON.stringify(validated));
+      const result = await apiJson<AnalyticsResult>(await fetch(`${API}/analytics/execute`, { method: "POST", body }));
+      setAnalyticsResult(result);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Analytics execution failed");
+    } finally {
+      setBusy(false);
+      setPhase(null);
+    }
+  }
+
   const selectedTemplatePlan = canonicalTemplatePlan(templateProposal);
   const derivedTargets = new Set(selectedTemplatePlan?.derivations.map((item) => item.target_field) ?? []);
   const unresolvedTemplateFields = templateProposal?.clarifications.filter((item) => !derivedTargets.has(item.target_field)) ?? [];
@@ -305,7 +358,7 @@ export default function WorkspacePage() {
   const hasInputs = Boolean(dataset && document && (
     demo === "grades" || (demo === "sales" && customers && targets) || (demo === "template" && customers && templateTarget)
   ));
-  const canRun = Boolean(demo !== "sources" && hasInputs && goal.trim() && runtime?.status === "ready" && !busy && (demo !== "template" || !templateProposal || unresolvedTemplateFields.length === 0));
+  const canRun = Boolean(demo !== "sources" && demo !== "analytics" && hasInputs && goal.trim() && runtime?.status === "ready" && !busy && (demo !== "template" || !templateProposal || unresolvedTemplateFields.length === 0));
   const runtimeLabel = runtime
     ? runtime.orchestrator_status === "demo"
       ? "Demo provider"
@@ -329,7 +382,7 @@ export default function WorkspacePage() {
       <section className="composer">
         <label htmlFor="demo">Demonstration workflow</label>
         <select id="demo" className="modePicker" value={demo} disabled={busy} onChange={(event) => {
-          const next = event.target.value as "grades" | "sales" | "template" | "sources";
+          const next = event.target.value as "grades" | "sales" | "template" | "sources" | "analytics";
           setDemo(next);
           setGoal(next === "grades"
             ? "According to the grading policy, what score do I need on my final to finish with an A?"
@@ -337,17 +390,21 @@ export default function WorkspacePage() {
               ? "Prepare this month's submission in the supplied template. Preserve its structure, derive net sales, apply the documented commission policy, verify the output, and save a reusable workflow."
               : next === "sources"
                 ? "Import a bounded JSON, Parquet, PostgreSQL, or REST source into the existing dataset tools without storing secrets in the browser."
+                : next === "analytics"
+                  ? "Which region is furthest below target, what is the shortfall, and which salesperson contributed the most net sales?"
               : "Prepare the August sales report. Clean the transaction data, compare performance against targets by region, identify the largest drivers of underperformance, calculate salesperson commissions according to the policy, generate appropriate charts, and export a management workbook while preserving the original data.");
           setDataset(null); setDocument(null); setCustomers(null); setTargets(null); setExecution(null);
           setTemplateTarget(null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({});
-          setSourceResult(null); setSourceFile(null);
+          setSourceResult(null); setSourceFile(null); setAnalyticsFile(null); setAnalyticsResult(null); setAnalyticsPlan(SHORTFALL_PLAN);
           setDatasetInfo("No dataset selected"); setDocumentInfo("No document selected");
-        }}><option value="grades">Grades + syllabus</option><option value="sales">August sales report</option><option value="template">Transform to supplied template</option><option value="sources">External and file sources</option></select>
+        }}><option value="grades">Grades + syllabus</option><option value="sales">August sales report</option><option value="template">Transform to supplied template</option><option value="sources">External and file sources</option><option value="analytics">Deterministic analytics</option></select>
+        {demo === "analytics" && <p className="sourceNote">Numbers come from a typed analytical plan executed in pandas. The model does not invent the shortfall or contributor ranking.</p>}
         {demo === "sources" && <p className="sourceNote">Passwords and tokens stay in server environment variables. This UI only sends secret reference names, never raw credentials.</p>}
         {(demo === "sales" || demo === "template") && <div className="promise" aria-label="Workflow outcomes"><span>01 · Inspect & map</span><span>02 · Transform & derive</span><span>03 · Verify & export</span></div>}
+        {demo === "analytics" && <div className="promise" aria-label="Analytics outcomes"><span>01 · Typed plan</span><span>02 · Deterministic facts</span><span>03 · Verified explanation</span></div>}
         <label htmlFor="goal">What should the workspace accomplish?</label>
         <textarea id="goal" value={goal} onChange={(event) => setGoal(event.target.value)} required maxLength={10000} />
-        {demo !== "sources" && <>
+        {demo !== "sources" && demo !== "analytics" && <>
         <div className="uploads">
           <label className="upload">{demo === "grades" ? "Structured grade data" : demo === "template" ? "Raw orders" : "August transactions"}<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setDataset(event.target.files?.[0] ?? null); setDatasetInfo("Awaiting inspection"); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{dataset?.name ?? datasetInfo}</small></label>
           <label className="upload">{demo === "grades" ? "Grading policy PDF" : demo === "template" ? "Reporting policy PDF" : "Commission policy PDF"}<input type="file" accept=".pdf,application/pdf" disabled={busy} onChange={(event) => { setDocument(event.target.files?.[0] ?? null); setDocumentInfo("Awaiting ingestion"); setTemplateResult(null); }} /><small>{document?.name ?? documentInfo}</small></label>
@@ -379,12 +436,27 @@ export default function WorkspacePage() {
           </div>}
           <button type="button" disabled={busy || runtime?.status !== "ready"} onClick={importBoundSource}>{busy ? phase ?? "Importing…" : "Import source"}</button>
         </div>}
+        {demo === "analytics" && <div>
+          <label className="upload">Analytics dataset (use sample_data/analytics_sales.csv)<input type="file" accept=".csv,.xlsx,.json,.parquet,.pq" disabled={busy} onChange={(event) => setAnalyticsFile(event.target.files?.[0] ?? null)} /><small>{analyticsFile?.name ?? "No dataset selected"}</small></label>
+          <pre className="sourceNote">{JSON.stringify(analyticsPlan, null, 2)}</pre>
+          <button type="button" disabled={busy || !analyticsFile || runtime?.status !== "ready"} onClick={runAnalytics}>{busy ? phase ?? "Running analytics…" : "Run typed analytical plan"}</button>
+        </div>}
         {busy && <p className="progress" role="status" aria-live="polite"><span />{phase ?? "Executing bounded workflow"}. Source uploads remain unchanged.</p>}
-        {demo !== "sources" && !hasInputs ? <p className="hint">Select all required sample inputs to enable the task.</p> : null}
+        {demo !== "sources" && demo !== "analytics" && !hasInputs ? <p className="hint">Select all required sample inputs to enable the task.</p> : null}
         {error && <p className="error" role="alert">{error}</p>}
       </section>
     </form>
-    {demo === "sources" ? <div className="results">
+    {demo === "analytics" ? <div className="results">
+      <section className="panel answer"><div className="panelTitle"><h2>Deterministic explanation</h2><span className={`pill ${analyticsResult ? "verified" : "idle"}`}>{analyticsResult ? "verified facts" : "Awaiting run"}</span></div>
+        {analyticsResult ? <p>{analyticsResult.explanation}</p> : <p>Upload analytics_sales.csv to compute the largest regional shortfall and top salesperson contribution from structured facts.</p>}
+      </section>
+      <section className="panel"><div className="panelTitle"><h2>Numeric facts</h2><span>{analyticsResult?.facts.length ?? 0}</span></div>
+        {analyticsResult?.facts.map((fact) => <p key={fact.key}><strong>{fact.label}: {fact.value ?? "n/a"}</strong><small className="sourceNote">{fact.key} · {fact.calculation}</small></p>)}
+      </section>
+      <section className="panel"><div className="panelTitle"><h2>Result table</h2><span>{analyticsResult?.row_count ?? 0} rows</span></div>
+        {analyticsResult ? <pre className="sourceNote">{JSON.stringify(analyticsResult.rows, null, 2)}</pre> : <p className="muted">Aggregations stay inspectable and rerunnable.</p>}
+      </section>
+    </div> : demo === "sources" ? <div className="results">
       <section className="panel answer"><div className="panelTitle"><h2>Imported source</h2><span className={`pill ${sourceResult ? "verified" : "idle"}`}>{sourceResult ? "imported" : "Awaiting import"}</span></div>
         {sourceResult ? <pre className="sourceNote">{JSON.stringify(sourceResult, null, 2)}</pre> : <p>JSON and Parquet become inspectable datasets. TXT is chunked through the existing retrieval pipeline. PostgreSQL and REST imports require server-side secret references.</p>}
       </section>

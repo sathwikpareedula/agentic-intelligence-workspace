@@ -50,6 +50,8 @@ Transform-to-Template reuses these ingestion and join boundaries behind a specia
 
 JSON and Parquet uploads share `load_dataset` / inspect / profile. UTF-8 `.txt` documents reuse PDF chunking and the retrieval repository. External PostgreSQL is a separate read-only data source from application persistence. REST GET imports JSON through the same table adapter after SSRF checks. Imported tables are ordinary datasets and can feed Transform-to-Template. DOCX is not implemented.
 
+Typed `AnalyticsPlan` objects describe filters, grouping, metrics, ranking, rolling windows, correlation, and target variance. Pandas executes them. Optional external SQL reuses the read-only PostgreSQL connector. DuckDB is not used. Numeric claims verify against named facts from these tools.
+
 ### Retrieval Tools
 
 The retrieval service validates and extracts text from PDFs in memory, chunks normalized page text deterministically with configurable overlap, embeds chunks through a provider interface, and stores them through a document repository interface. The production provider is OpenAI `text-embedding-3-small`; tests and evaluation use an offline deterministic fake. Provider name, model, and dimensions are persisted and included in search predicates so vectors from incompatible spaces are not mixed. Results are ranked evidence candidates with document, filename, page, and chunk provenance, not generated answers or verified conclusions. Scanned/image-only documents require future OCR and are rejected when no text is extractable.

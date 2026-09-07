@@ -24,7 +24,7 @@ This is an early threat checklist. Every item below is a risk or design requirem
 
 - Risk: model-generated SQL may expose, corrupt, or delete data or consume excessive resources.
 - Design requirements: avoid unrestricted execution; use typed query operations or validated constrained SQL, parameterization, least-privilege roles, read-only defaults, resource limits, and explicit confirmation for mutations.
-- Current status: analytics still use typed pandas. The external PostgreSQL connector additionally allows a single validated WITH/SELECT or identifier-quoted table read inside a `READ ONLY` session. INSERT/UPDATE/DELETE/DDL/COPY/multi-statements, locking `SELECT FOR UPDATE/SHARE`, `ANALYZE`, and session-mutating functions such as `set_config` are rejected. This is not natural-language SQL and not a query engine over the application database.
+- Current status: workspace analytics use typed pandas plans (`AnalyticsPlan`) rather than generated SQL. The external PostgreSQL connector additionally allows a single validated WITH/SELECT or identifier-quoted table read inside a `READ ONLY` session, including the `/analytics/sql` path. INSERT/UPDATE/DELETE/DDL/COPY/multi-statements, locking `SELECT FOR UPDATE/SHARE`, `ANALYZE`, and session-mutating functions such as `set_config` are rejected. This is not natural-language SQL and not a query engine over the application database.
 
 ### SSRF (REST connector)
 

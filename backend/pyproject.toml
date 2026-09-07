@@ -34,6 +34,7 @@ product-eval = "app.evaluation.product:main"
 agent-eval = "app.evaluation.agent:main"
 template-transform-eval = "app.evaluation.template_transform:main"
 sources-eval = "app.evaluation.sources:main"
+analytics-eval = "app.evaluation.analytics:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

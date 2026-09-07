@@ -21,6 +21,7 @@ This project turns natural-language goals over structured data and unstructured 
 - A recruiter-focused August sales workflow that discovers the three uploaded table roles from inspected schemas, retrieves commission evidence, runs deterministic cleaning/joins/analysis/commissions, verifies named facts, generates a six-sheet workbook with three charts, and saves a schema-checked recipe.
 - A deterministic Transform-to-Template workflow for CSV/XLSX targets with structural inspection, evidence-ranked mappings, first-class clarification states, guarded joins and derivations, policy-grounded rates, exact template writing, reopen validation, field provenance, and drift-checked reruns.
 - Bounded JSON/Parquet dataset adapters, UTF-8 text document ingestion through the existing retriever, a read-only external PostgreSQL connector, and a GET-only REST JSON connector with SSRF protections and secret references.
+- Typed deterministic analytics over workspace datasets, with named numeric facts, existing-verifier grounding, optional validated read-only SQL against external PostgreSQL, and a focused analytics UI. DuckDB is not used.
 
 ## Quick start
 

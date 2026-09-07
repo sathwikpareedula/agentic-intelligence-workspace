@@ -62,6 +62,10 @@ Successful XLSX jobs write a new artifact while preserving sheet names/order, un
 
 The workspace can inspect/import JSON (array of objects or one clearly selected record array), Parquet, UTF-8 text documents, a read-only external PostgreSQL source, and GET-only REST JSON. Secrets are environment references. There is no secret manager, OAuth, natural-language SQL, MySQL, SaaS connector, or DOCX extractor in this phase.
 
+## Phase 3 Analytics
+
+Users can run typed analytical plans over workspace datasets: filters, grouping, aggregations, ranking, rolling averages, percent change, correlation, distribution summaries, and target/actual variance. Calculations are pandas-only. Optional SQL against an approved external PostgreSQL source is the same single validated read-only SELECT used in Phase 2. Results are named numeric facts that the existing verifier can ground. This is not a dashboard/anomaly product.
+
 ## Evidence-First Behavior
 
 The system must distinguish sourced facts, deterministic results, model interpretation, assumptions, and unknowns. It must not fabricate missing information. When evidence is insufficient, it should say so explicitly and identify what would be needed to continue. Outputs should be traceable to source material and tool results.

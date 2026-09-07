@@ -35,6 +35,7 @@ Bounded execution, mixed reasoning, verification, workflows, artifacts, sales an
 - 2026-09-06: Added Transform-to-Template V1 with typed CSV/XLSX target inspection, source profiling/key candidates, deterministic mapping proposals, structured clarification/refusal, guarded joins and derivations, evidence-bound policy rates, exact template writing/reopen validation, per-field provenance, reusable drift-checked workflows, task-scoped agent tools, public multipart APIs, focused frontend workflow, canonical fixtures, and an 18-case controlled evaluation.
 - 2026-09-07: Completed Phase 1 Transform-to-Template integration with user-confirmed mapping controls, fixture-scoped demo rules, formula-origin-aware translation and reopen verification, confirmed mapping persistence, CI evaluation coverage, responsive browser QA, and final backend/frontend/security gates.
 - 2026-09-07: Added Phase 2 bounded JSON/Parquet/TXT adapters, a read-only external PostgreSQL connector, and a GET-only REST JSON connector with SSRF checks, secret references, provenance, task-scoped tools, source evaluation cases, and a minimal source UI. DOCX was deferred.
+- 2026-09-07: Added Phase 3 typed analytical plans executed with pandas, named numeric facts grounded in the existing verifier, optional validated read-only SQL reuse, task-scoped tools, a focused analytics UI, and a dedicated evaluation family. DuckDB was not introduced.
 
 ## Technologies Actually Used
 
@@ -59,7 +60,7 @@ Add technologies here only after they are actually used in the project.
 - Prefer one orchestrator with typed deterministic tools for the initial architecture.
 - Keep calculations, transformations, joins, statistics, and schema checks in deterministic code.
 - Defer implementation technology adoption until its milestone requires it.
-- Defer DuckDB and SQL execution because the current typed pandas operations satisfy the bounded analytics scope without introducing another query and security boundary.
+- Defer DuckDB because typed pandas analytical plans satisfy the Phase 3 metric set without a second SQL engine. Revisit only if local multi-dataset SQL is required.
 - Use PostgreSQL with pgvector as the retrieval store, exact cosine search initially, and interfaces for both vector storage and embedding providers.
 - Use one task-scoped orchestrator with strictly structured provider decisions; do not expose uploaded bodies or add arbitrary execution to gain generality.
 
@@ -71,9 +72,9 @@ Material decisions should receive a record under `docs/decisions/`.
 
 ## Evaluation Results
 
-- Backend test suite: 149 tests passed excluding the opt-in live PostgreSQL integration test, with 2 framework deprecation warnings. Live Postgres connector evaluation cases remain deferred without TEST_DATABASE_URL.
+- Backend test suite: 157 tests passed excluding the opt-in live PostgreSQL integration test, with 2 framework deprecation warnings. Live Postgres connector evaluation cases remain deferred without TEST_DATABASE_URL.
 - Controlled offline retrieval evaluation: 5 queries at `top_k=2`, Hit@2 = 1.0 and mean reciprocal rank = 1.0. This measures the fixed token-hash test corpus, not hosted embedding quality or production recall.
-- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Controlled north-star evaluation: 14/14 cases passed. Controlled Transform-to-Template evaluation: 18/18 cases passed. Controlled source/connector evaluation: 15/17 local cases passed with E/F deferred without TEST_DATABASE_URL. These offline evaluations do not measure hosted-model quality, latency, or cost.
+- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Controlled north-star evaluation: 14/14 cases passed. Controlled Transform-to-Template evaluation: 18/18 cases passed. Controlled source/connector evaluation: 15/17 local cases passed with E/F deferred without TEST_DATABASE_URL. Controlled analytics evaluation: 17/17 cases passed. These offline evaluations do not measure hosted-model quality, latency, or cost.
 - Frontend verification: TypeScript passed, the Next.js 16.3.4 optimized production build passed, and `npm audit --audit-level=high` reported zero vulnerabilities without changing `package.json` or `package-lock.json`.
 - Browser verification: the canonical Transform-to-Template fixture completed through the live local UI with proposal visibility, 13 passing validation checks, policy provenance, workbook download, and saved-workflow visibility; the narrow responsive layout was visually checked.
 - Workbook verification: the generated canonical artifact reopened in both the backend validation and the spreadsheet inspection runtime, preserved both sheets and their order, retained translated formulas in `F2:F4`, neutralized the formula-like customer value, and rendered both worksheets for visual review.
