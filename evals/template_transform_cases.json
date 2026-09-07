@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {"id": "A_exact_mapping", "name": "Exact source-to-target mapping"},
+    {"id": "B_normalized_mapping", "name": "Normalized source-to-target mapping"},
+    {"id": "C_ambiguous_mapping", "name": "Ambiguous mapping requires clarification"},
+    {"id": "D_missing_required_field", "name": "Missing required field is refused"},
+    {"id": "E_incompatible_type", "name": "Incompatible target type is refused"},
+    {"id": "F_safe_join", "name": "Safe join completes with diagnostics"},
+    {"id": "G_suspicious_join", "name": "Suspicious row-multiplying join is blocked"},
+    {"id": "H_derived_field", "name": "Derived fields are deterministic"},
+    {"id": "I_exact_output_schema_order", "name": "Output schema and order are exact"},
+    {"id": "J_workbook_reopen", "name": "Generated workbook reopens"},
+    {"id": "K_template_preservation", "name": "Unrelated workbook sheets are preserved"},
+    {"id": "L_formula_injection_protection", "name": "Untrusted spreadsheet formulas are neutralized"},
+    {"id": "M_policy_grounded_derivation", "name": "Policy-derived values retain evidence"},
+    {"id": "N_unsupported_policy_refusal", "name": "Unsupported policy rule is refused"},
+    {"id": "O_workflow_rerun", "name": "Saved workflow reruns deterministically"},
+    {"id": "P_schema_drift", "name": "Source schema drift is detected"},
+    {"id": "Q_template_drift", "name": "Template drift is detected"},
+    {"id": "R_confirmed_mapping_reuse", "name": "Confirmed mappings are reused"}
+  ]
+}
+

@@ -4,7 +4,7 @@ This log records verified project progress. Planned work should not be presented
 
 ## Current Status
 
-Bounded execution, mixed reasoning, verification, workflows, artifacts, sales demo, durable persistence, production provider integration, generalized task-scoped orchestration, and the frontend foundation are implemented and verified where noted below.
+Bounded execution, mixed reasoning, verification, workflows, artifacts, sales and Transform-to-Template demos, durable persistence, production provider integration, generalized task-scoped orchestration, and the frontend foundation are implemented and verified where noted below.
 
 ## Milestone History
 
@@ -32,6 +32,8 @@ Bounded execution, mixed reasoning, verification, workflows, artifacts, sales de
 - 2026-09-04: Added an environment-configured OpenAI-compatible Responses adapter with strict structured decisions, bounded output, SDK retries, timeouts, stable safe errors, and explicit demo/configured/unavailable runtime status.
 - 2026-09-04: Generalized the one orchestrator with task-scoped dataset, retrieval, join, aggregation, artifact-export, and saved-workflow tools while keeping deterministic services responsible for data and numeric work.
 - 2026-09-04: Added controlled generalized-agent evaluation and tests for malformed provider output, timeout/failure mapping, invalid arguments, replanning, iteration limits, mixed structured/unstructured tasks, artifacts, workflows, and insufficient evidence.
+- 2026-09-06: Added Transform-to-Template V1 with typed CSV/XLSX target inspection, source profiling/key candidates, deterministic mapping proposals, structured clarification/refusal, guarded joins and derivations, evidence-bound policy rates, exact template writing/reopen validation, per-field provenance, reusable drift-checked workflows, task-scoped agent tools, public multipart APIs, focused frontend workflow, canonical fixtures, and an 18-case controlled evaluation.
+- 2026-09-07: Completed Phase 1 Transform-to-Template integration with user-confirmed mapping controls, fixture-scoped demo rules, formula-origin-aware translation and reopen verification, confirmed mapping persistence, CI evaluation coverage, responsive browser QA, and final backend/frontend/security gates.
 
 ## Technologies Actually Used
 
@@ -43,7 +45,7 @@ Bounded execution, mixed reasoning, verification, workflows, artifacts, sales de
 - Uvicorn for local ASGI application verification.
 - pytest and HTTPX for health endpoint testing.
 - pandas for deterministic tabular ingestion, inspection, and profiling.
-- openpyxl for read-only, data-only `.xlsx` workbook ingestion.
+- openpyxl for bounded `.xlsx` workbook inspection, preservation, formula translation, and new artifact generation.
 - python-multipart for bounded FastAPI file-upload request parsing.
 - pypdf for non-executing PDF text extraction.
 - psycopg and pgvector for the production-intended PostgreSQL vector repository.
@@ -68,13 +70,14 @@ Material decisions should receive a record under `docs/decisions/`.
 
 ## Evaluation Results
 
-- Backend test suite: 99 tests passed, 1 opt-in live PostgreSQL integration test skipped, and 2 framework deprecation warnings were reported.
+- Backend test suite: 132 tests passed, 1 opt-in live PostgreSQL integration test skipped, and 2 framework deprecation warnings were reported.
 - Controlled offline retrieval evaluation: 5 queries at `top_k=2`, Hit@2 = 1.0 and mean reciprocal rank = 1.0. This measures the fixed token-hash test corpus, not hosted embedding quality or production recall.
-- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Neither evaluation measures hosted-model quality, latency, or cost.
-- Frontend verification: TypeScript passed, the Next.js 16.3.4 optimized production build passed, and a normal `npm audit` after an up-to-date `npm install` reported zero vulnerabilities without changing `package.json` or `package-lock.json`.
+- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Controlled north-star evaluation: 14/14 cases passed. Controlled Transform-to-Template evaluation: 18/18 cases passed. These offline evaluations do not measure hosted-model quality, latency, or cost.
+- Frontend verification: TypeScript passed, the Next.js 16.3.4 optimized production build passed, and `npm audit --audit-level=high` reported zero vulnerabilities without changing `package.json` or `package-lock.json`.
+- Browser verification: the canonical Transform-to-Template fixture completed through the live local UI with proposal visibility, 13 passing validation checks, policy provenance, workbook download, and saved-workflow visibility; the narrow responsive layout was visually checked.
+- Workbook verification: the generated canonical artifact reopened in both the backend validation and the spreadsheet inspection runtime, preserved both sheets and their order, retained translated formulas in `F2:F4`, neutralized the formula-like customer value, and rendered both worksheets for visual review.
 - No real orchestrator request was run because neither `ORCHESTRATOR_API_KEY` nor `OPENAI_API_KEY` was available.
 - Docker configuration was added but could not be executed or validated because Docker is unavailable in this environment.
-- Browser interaction QA could not run because no controllable browser was available; this remains explicitly pending despite successful frontend build verification.
 
 ## Performance Results
 
@@ -87,6 +90,7 @@ No performance measurements have been run yet.
 - Transformation requests use a closed typed operation set with unknown fields rejected; no arbitrary Python or SQL execution is available.
 - Exported artifacts remain request-scoped in memory and use service-generated sanitized filenames rather than user-controlled filesystem paths.
 - Formula-like text is neutralized during CSV/XLSX export to prevent uploaded strings from becoming active spreadsheet formulas.
+- Transform templates reject macro-enabled formats, unsafe XLSX archive paths, oversized/over-complex workbook structures, embedded or externally linked active content, and external/active formulas. Untrusted source formula strings remain neutralized while supported local target formulas are preserved and translated.
 - PDF content is bounded and treated as untrusted evidence data; it is never executed or treated as system instructions.
 - Retrieval credentials come from environment variables; API responses preserve document/page/chunk provenance and never fabricate citations.
 - Orchestrator keys, model, base URL, timeout, retry count, and output bound come from environment configuration. Credential-bearing base URLs are rejected, file bodies and secret-like arguments are redacted, and provider failures expose only stable safe messages.

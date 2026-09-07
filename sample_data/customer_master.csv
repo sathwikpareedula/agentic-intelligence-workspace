@@ -1,0 +1,5 @@
+cust_id,customer_name,territory
+C001, Acme North ,North
+C002,Bright South,South
+C003,=HYPERLINK(""https://example.invalid""),West
+

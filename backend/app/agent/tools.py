@@ -15,12 +15,20 @@ from app.models.retrieval import RetrievalRequest
 from app.models.grades import PolicyEvidence, RequiredFinalInput
 from app.models.transformations import JoinSpec, Transformation, TransformRequest
 from app.models.workflows import WorkflowCreate, WorkflowStep
+from app.models.template_transforms import (
+    FilePayload,
+    SourcePayload,
+    TransformExecutionRequest,
+    TransformProposalRequest,
+    TransformTemplatePlan,
+)
 from app.services.datasets import inspect_dataset, load_dataset, profile_dataset
 from app.services.retrieval import RetrievalService
 from app.services.grades import calculate_required_final
 from app.services.artifacts import ArtifactRepository, generate_artifact
 from app.services.sales_report import build_august_sales_report
 from app.services.transformations import apply_transformations, dataframe_result, join_datasets
+from app.services.template_transforms import execute_transform, propose_transform
 
 if TYPE_CHECKING:
     from app.services.workflows import WorkflowService
@@ -156,6 +164,27 @@ class BoundWorkflowRunInput(ToolInput):
     step_overrides: dict[Annotated[int, Field(ge=1)], dict[str, Any]] = Field(default_factory=dict)
 
 
+class BoundTemplateSource(ToolInput):
+    role: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    dataset: str = Field(min_length=1, max_length=255)
+
+
+class BoundTemplateProposalInput(ToolInput):
+    target_dataset: str = Field(min_length=1, max_length=255)
+    sources: list[BoundTemplateSource] = Field(min_length=1, max_length=8)
+    required_fields: list[str] | None = None
+    explicit_mappings: dict[str, str] = Field(default_factory=dict)
+    documented_aliases: dict[str, list[str]] = Field(default_factory=dict)
+    header_row: int | None = Field(default=None, ge=1, le=100)
+
+
+class BoundTemplateExecuteInput(ToolInput):
+    target_dataset: str = Field(min_length=1, max_length=255)
+    sources: list[BoundTemplateSource] = Field(min_length=1, max_length=8)
+    plan: TransformTemplatePlan
+    policy_evidence: list[PolicyEvidence] = Field(default_factory=list, max_length=20)
+
+
 def dataset_tools() -> list[TypedTool[Any]]:
     def inspect(arguments: DatasetInput) -> ToolObservation:
         dataset = load_dataset(arguments.filename, arguments.content(), arguments.sheet)
@@ -177,6 +206,41 @@ def dataset_tools() -> list[TypedTool[Any]]:
         TypedTool("dataset.profile", "Profile deterministic numeric and categorical statistics.", DatasetInput, profile),
         TypedTool("dataset.transform", "Apply the closed set of validated dataframe operations.", TransformInput, transform),
     ]
+
+
+def template_transform_tool(artifact_repository: ArtifactRepository) -> TypedTool[TransformExecutionRequest]:
+    """Full-content workflow tool used only for validated deterministic recipe reruns."""
+
+    def transform(arguments: TransformExecutionRequest) -> ToolObservation:
+        executed = execute_transform(arguments)
+        artifact_repository.save(executed.artifact)
+        return ToolObservation(
+            success=True,
+            summary=f"Wrote and verified {executed.artifact.row_count} rows in the supplied template.",
+            result={
+                "status": executed.validation.status,
+                "validation": executed.validation.model_dump(mode="json"),
+                "provenance": [item.model_dump(mode="json") for item in executed.provenance],
+                "artifact": {
+                    "artifact_id": str(executed.artifact.artifact_id),
+                    "filename": executed.artifact.filename,
+                    "media_type": executed.artifact.media_type,
+                    "row_count": executed.artifact.row_count,
+                    "column_count": executed.artifact.column_count,
+                    "download_url": f"/artifacts/{executed.artifact.artifact_id}",
+                },
+            },
+            artifact_ids=[str(executed.artifact.artifact_id)],
+            source_ids=[item for field in executed.provenance for item in field.policy_evidence_ids],
+            warnings=executed.validation.warnings,
+        )
+
+    return TypedTool(
+        "template.transform",
+        "Execute a saved deterministic transform-to-template plan, validate drift and output, and create an artifact.",
+        TransformExecutionRequest,
+        transform,
+    )
 
 
 def general_task_tools(
@@ -278,6 +342,116 @@ def general_task_tools(
             result["join_diagnostics"] = diagnostics.model_dump(mode="json")
             return observation.model_copy(update={"result": result})
 
+        def template_payload(name: str) -> FilePayload:
+            resource = datasets.get(name)
+            if resource is None:
+                raise ValueError(f"Dataset '{name}' is not bound to this task.")
+            return FilePayload(filename=resource.filename, content_base64=resource.content_base64, sheet=resource.sheet)
+
+        def source_payloads(items: list[BoundTemplateSource]) -> list[SourcePayload]:
+            if len({item.dataset for item in items}) != len(items):
+                raise ValueError("Each transform source must reference a distinct bound dataset.")
+            return [SourcePayload(**template_payload(item.dataset).model_dump(), role=item.role) for item in items]
+
+        def propose_template(arguments: BoundTemplateProposalInput) -> ToolObservation:
+            names = {arguments.target_dataset, *(item.dataset for item in arguments.sources)}
+            if not names.issubset(inspected_datasets):
+                raise ValueError("Inspect the target template and every source dataset before proposing mappings.")
+            proposal = propose_transform(
+                TransformProposalRequest(
+                    target=template_payload(arguments.target_dataset),
+                    sources=source_payloads(arguments.sources),
+                    required_fields=arguments.required_fields,
+                    explicit_mappings=arguments.explicit_mappings,
+                    documented_aliases=arguments.documented_aliases,
+                    header_row=arguments.header_row,
+                )
+            )
+            return ToolObservation(
+                success=True,
+                summary=(
+                    "Template mapping is ready for deterministic execution."
+                    if proposal.status == "ready"
+                    else f"Template mapping requires clarification for {len(proposal.clarifications)} target fields."
+                ),
+                result=proposal.model_dump(mode="json"),
+                warnings=[item.reason for item in proposal.clarifications],
+            )
+
+        def execute_template(arguments: BoundTemplateExecuteInput) -> ToolObservation:
+            names = {arguments.target_dataset, *(item.dataset for item in arguments.sources)}
+            if not names.issubset(inspected_datasets):
+                raise ValueError("Inspect the target template and every source dataset before execution.")
+            has_policy_rule = any(rule.operation == "policy_multiply" for rule in arguments.plan.derivations)
+            if has_policy_rule:
+                if not retrieved_evidence or any(
+                    retrieved_evidence.get(str(item.source.chunk_id)) != item for item in arguments.policy_evidence
+                ):
+                    raise ValueError("Policy evidence must exactly match evidence retrieved in this task.")
+                evidence = list(retrieved_evidence.values())
+            else:
+                evidence = []
+            request = TransformExecutionRequest(
+                target=template_payload(arguments.target_dataset),
+                sources=source_payloads(arguments.sources),
+                plan=arguments.plan,
+                policy_evidence=evidence,
+            )
+            executed = execute_transform(request)
+            artifact_repository.save(executed.artifact)
+            workflow = None
+            if workflow_service is not None:
+                confirmed_plan = arguments.plan.model_copy(
+                    update={
+                        "mappings": [
+                            item.model_copy(
+                                update={
+                                    "status": "confirmed",
+                                    "evidence": f"{item.evidence} Accepted by successful validated execution.",
+                                }
+                            )
+                            if item.status == "proposed_high_confidence"
+                            else item
+                            for item in arguments.plan.mappings
+                        ]
+                    }
+                )
+                saved_request = request.model_copy(update={"plan": confirmed_plan})
+                workflow = workflow_service.create(
+                    WorkflowCreate(
+                        name=f"Transform to {arguments.plan.target_filename}",
+                        steps=[WorkflowStep(tool="template.transform", arguments=saved_request.model_dump(mode="json"))],
+                    )
+                )
+            result = {
+                "status": executed.validation.status,
+                "validation": executed.validation.model_dump(mode="json"),
+                "provenance": [item.model_dump(mode="json") for item in executed.provenance],
+                "artifact": {
+                    "artifact_id": str(executed.artifact.artifact_id),
+                    "filename": executed.artifact.filename,
+                    "media_type": executed.artifact.media_type,
+                    "row_count": executed.artifact.row_count,
+                    "column_count": executed.artifact.column_count,
+                    "download_url": f"/artifacts/{executed.artifact.artifact_id}",
+                },
+            }
+            if workflow is not None:
+                result["saved_workflow"] = {
+                    "workflow_id": str(workflow.workflow_id),
+                    "name": workflow.name,
+                    "version": workflow.version,
+                    "rerun_url": f"/workflows/{workflow.workflow_id}/runs",
+                }
+            return ToolObservation(
+                success=True,
+                summary=f"Wrote and verified {executed.artifact.row_count} rows in the supplied template.",
+                result=result,
+                artifact_ids=[str(executed.artifact.artifact_id)],
+                source_ids=[item for field in executed.provenance for item in field.policy_evidence_ids],
+                warnings=executed.validation.warnings,
+            )
+
         tools.extend(
             [
                 TypedTool(
@@ -315,6 +489,18 @@ def general_task_tools(
                     "Deterministically transform and join two bound datasets and create a complete downloadable CSV or XLSX artifact with join diagnostics.",
                     BoundDatasetJoinExportInput,
                     join_export_bound,
+                ),
+                TypedTool(
+                    "template.propose",
+                    "After inspecting all selected files, deterministically inspect the target template and propose evidence-ranked field mappings. Return clarification requirements instead of guessing.",
+                    BoundTemplateProposalInput,
+                    propose_template,
+                ),
+                TypedTool(
+                    "template.execute",
+                    "Execute a ready transform-to-template plan over bound files, fail closed on ambiguity or unsafe joins, validate the exact artifact, and save a reusable drift-checked workflow.",
+                    BoundTemplateExecuteInput,
+                    execute_template,
                 ),
             ]
         )

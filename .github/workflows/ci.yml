@@ -40,6 +40,7 @@ jobs:
       - run: python -m app.evaluation.product ../evals/product_cases.json
       - run: python -m app.evaluation.agent ../evals/agent_cases.json
       - run: python -m app.evaluation.north_star ../evals/north_star_cases.json
+      - run: python -m app.evaluation.template_transform ../evals/template_transform_cases.json
   frontend:
     runs-on: ubuntu-latest
     defaults:

@@ -52,6 +52,12 @@ Artifacts are first-class outputs rather than incidental downloads. Planned arti
 
 The system should ask for user input when intent is materially ambiguous, evidence conflicts, or an operation could be destructive, irreversible, unexpectedly broad, or security-sensitive. Confirmations should describe the proposed action and its scope. Routine read-only work should not create unnecessary friction.
 
+## Transform-to-Template V1
+
+The workspace accepts one to eight CSV/XLSX sources, an exact CSV/XLSX target template, and optional retrieved policy evidence. It inspects workbook structure and source profiles, proposes mappings in a deterministic evidence order, and returns field-specific clarification requirements instead of inventing missing business data. Confirmed or high-confidence mappings feed typed joins, cleaning, arithmetic/concatenation derivations, and policy-rate derivations; suspicious multiplication, excessive unmatched rows, incompatible values, and unresolved required fields fail closed.
+
+Successful XLSX jobs write a new artifact while preserving sheet names/order, unrelated sheets, formats, and trusted local template formulas. CSV jobs preserve exact headers/order. Both formats neutralize untrusted formula-like source text, reopen the result, validate schema and required/unique fields, attach per-field provenance, and save a recipe that pins mappings/rules/evidence. Reruns accept replacement sources/templates only when their roles, schemas, and structural template fingerprint remain compatible.
+
 ## Evidence-First Behavior
 
 The system must distinguish sourced facts, deterministic results, model interpretation, assumptions, and unknowns. It must not fabricate missing information. When evidence is insufficient, it should say so explicitly and identify what would be needed to continue. Outputs should be traceable to source material and tool results.

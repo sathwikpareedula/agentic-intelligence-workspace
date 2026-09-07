@@ -88,6 +88,11 @@ class WorkflowService:
             if step.tool == "sales.august_report" and "policy_evidence" in overrides.get(index, {}):
                 return self._save_run(_failed(workflow, observations, index,
                     "Saved commission evidence is pinned. Start a new sales task to retrieve a replacement policy.", started_at), overrides)
+            if step.tool == "template.transform":
+                unsupported = sorted(set(overrides.get(index, {})) - {"sources", "target"})
+                if unsupported:
+                    return self._save_run(_failed(workflow, observations, index,
+                        f"Saved mappings, rules, and policy evidence are pinned; unsupported overrides: {unsupported}.", started_at), overrides)
             try:
                 validated = tool.input_model.model_validate(arguments)
                 if step.expected_columns is not None:

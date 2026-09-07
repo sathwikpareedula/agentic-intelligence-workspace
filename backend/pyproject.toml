@@ -31,6 +31,7 @@ test = [
 retrieval-eval = "app.evaluation.retrieval:main"
 product-eval = "app.evaluation.product:main"
 agent-eval = "app.evaluation.agent:main"
+template-transform-eval = "app.evaluation.template_transform:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

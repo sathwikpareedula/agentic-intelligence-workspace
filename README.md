@@ -19,6 +19,7 @@ This project turns natural-language goals over structured data and unstructured 
 - Production pgvector exact-cosine retrieval with provider/model/dimension isolation and optional document filtering.
 - PostgreSQL-backed workflow metadata plus local-filesystem artifact bodies with hashes and PostgreSQL provenance metadata.
 - A recruiter-focused August sales workflow that discovers the three uploaded table roles from inspected schemas, retrieves commission evidence, runs deterministic cleaning/joins/analysis/commissions, verifies named facts, generates a six-sheet workbook with three charts, and saves a schema-checked recipe.
+- A deterministic Transform-to-Template workflow for CSV/XLSX targets with structural inspection, evidence-ranked mappings, first-class clarification states, guarded joins and derivations, policy-grounded rates, exact template writing, reopen validation, field provenance, and drift-checked reruns.
 
 ## Quick start
 
@@ -62,9 +63,12 @@ cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.product ..\evals\product_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.agent ..\evals\agent_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.north_star ..\evals\north_star_cases.json
+.\.venv\Scripts\python.exe -m app.evaluation.template_transform ..\evals\template_transform_cases.json
 ```
 
 All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database.
+
+The Transform-to-Template evaluation covers all 18 controlled cases from exact and normalized mappings through ambiguity, missing fields, type refusal, safe/unsafe joins, derivations, exact schema order, workbook reopen/preservation, formula-injection protection, policy grounding/refusal, workflow reruns, source/template drift, and confirmed-mapping reuse.
 
 ## Demonstrations
 
@@ -84,6 +88,12 @@ The bounded orchestrator lists and inspects the authorized resources, identifies
 The downloadable workbook contains **Executive Summary**, **Regional Performance**, **Salesperson Performance**, **Cleaned Transactions**, **Data Quality**, and **Provenance & Sources** sheets plus actual-vs-target, shortfall, and commission charts. The UI shows a user-facing Goal → Plan → Inspect → Retrieve → Clean → Join → Analyze → Calculate commissions → Generate workbook → Verify → Complete trace, citations, warnings, verification findings, and the saved recipe version. Reruns accept compatible replacement resources and fail on material schema drift.
 
 The controlled fixture currently yields total net sales `2350.00`, total commission `117.50`, North net sales `1350.00`, and a North shortfall of `650.00`; Alice's cited-policy commission is `67.50`. An unmatched customer remains visible under `Unassigned`, and that missing customer/target relationship is reported as a warning rather than hidden. These are synthetic deterministic results, not hosted-model quality evidence.
+
+### Transform-to-Template demo
+
+Choose **Transform to supplied template** in the browser and upload `sample_data/raw_orders.xlsx`, `sample_data/customer_master.csv`, `sample_data/reporting_policy.pdf`, and `sample_data/required_template.xlsx`. The first action inspects the sources and target and displays mappings, confidence, and unresolved fields. The second executes the displayed deterministic customer join, currency cleaning, net-sales derivation, cited commission rule, exact workbook write, reopen checks, provenance, and workflow save.
+
+The output preserves the target's `Monthly Submission` and `Instructions` sheets, translates its trusted local formulas into each output row, and neutralizes untrusted formula-like source text. The original uploads are never overwritten. The public API is `POST /template-transforms/proposals` followed by `POST /template-transforms/executions`; successful executions return artifact and reusable-workflow references, while unresolved requirements and failed validation are explicit response states.
 
 ## Verification boundaries and current limitations
 

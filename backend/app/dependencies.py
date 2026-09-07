@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from fastapi import Depends, HTTPException, status
 
-from app.agent.tools import ToolRegistry, dataset_tools, sales_report_tool
+from app.agent.tools import ToolRegistry, dataset_tools, sales_report_tool, template_transform_tool
 from app.config import ConfigurationError, Settings, get_settings
 from app.embeddings.deterministic import DeterministicEmbeddingProvider
 from app.embeddings.openai_provider import OpenAIEmbeddingProvider
@@ -143,7 +143,7 @@ def get_workflow_service(settings: Settings = Depends(get_settings)) -> Workflow
     artifacts = get_artifact_repository(settings)
     return WorkflowService(
         repository,
-        ToolRegistry([*dataset_tools(), sales_report_tool(artifacts)]),
+        ToolRegistry([*dataset_tools(), sales_report_tool(artifacts), template_transform_tool(artifacts)]),
         artifacts,
     )
 

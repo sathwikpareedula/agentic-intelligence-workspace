@@ -31,6 +31,31 @@ type Execution = {
   verification?: { status: string; findings: { claim: string; status: string; explanation: string }[] };
 };
 type DocumentResult = { document_id: string; filename: string; page_count: number; chunk_count: number };
+type TemplateMapping = { target_field: string; source_role?: string; source_field?: string; mapping_type: string; confidence: number; evidence: string; status: string };
+type TemplatePlan = {
+  source_roles: string[];
+  target_filename: string;
+  target_headers: string[];
+  mappings: TemplateMapping[];
+  joins: unknown[];
+  derivations: { target_field: string; operation: string; inputs: { source_role: string; source_field: string; transformation?: string }[]; policy_query?: string; separator?: string; constant?: number }[];
+  [key: string]: unknown;
+};
+type TemplateProposal = {
+  status: "ready" | "clarification_required";
+  template: { target_sheet?: string; headers: string[]; sheets: { name: string }[]; fingerprint: string };
+  sources: { role: string; inspection: { filename: string; row_count: number; columns: string[] }; candidate_keys: string[][] }[];
+  plan: TemplatePlan;
+  clarifications: { code: string; target_field: string; candidate_options: string[]; reason: string }[];
+};
+type TemplateResult = {
+  status: "completed" | "completed_with_warnings" | "clarification_required" | "failed_validation";
+  validation?: { status: string; checks: { name: string; passed: boolean; detail: string }[]; errors: string[]; warnings: string[]; input_row_count: number; output_row_count: number };
+  provenance: { target_field: string; source_fields: string[]; transformation: string; policy_evidence_ids: string[]; validation: string }[];
+  clarifications: { target_field: string; reason: string }[];
+  artifact?: Artifact;
+  saved_workflow?: { workflow_id: string; name: string; version: number; rerun_url: string };
+};
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -65,12 +90,16 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function WorkspacePage() {
-  const [demo, setDemo] = useState<"grades" | "sales">("sales");
+  const [demo, setDemo] = useState<"grades" | "sales" | "template">("sales");
   const [goal, setGoal] = useState("Prepare the August sales report. Clean transactions, compare regional targets, identify the largest shortfalls, calculate policy-based commissions, and export a management workbook while preserving the originals.");
   const [dataset, setDataset] = useState<File | null>(null);
   const [document, setDocument] = useState<File | null>(null);
   const [customers, setCustomers] = useState<File | null>(null);
   const [targets, setTargets] = useState<File | null>(null);
+  const [templateTarget, setTemplateTarget] = useState<File | null>(null);
+  const [templateProposal, setTemplateProposal] = useState<TemplateProposal | null>(null);
+  const [templateResult, setTemplateResult] = useState<TemplateResult | null>(null);
+  const [mappingOverrides, setMappingOverrides] = useState<Record<string, string>>({});
   const [datasetInfo, setDatasetInfo] = useState("No dataset selected");
   const [documentInfo, setDocumentInfo] = useState("No document selected");
   const [execution, setExecution] = useState<Execution | null>(null);
@@ -113,11 +142,32 @@ export default function WorkspacePage() {
 
   async function runTask(event: FormEvent) {
     event.preventDefault();
-    if (busy || !dataset || !document || (demo === "sales" && (!customers || !targets)) || !goal.trim() || runtime?.status !== "ready") return;
+    if (busy || !dataset || !document || (demo === "sales" && (!customers || !targets)) || (demo === "template" && (!customers || !templateTarget)) || !goal.trim() || runtime?.status !== "ready") return;
     setBusy(true);
     setError(null);
     setExecution(null);
     try {
+      if (demo === "template" && customers && templateTarget) {
+        const files = new FormData();
+        files.append("target", templateTarget);
+        files.append("sources", dataset);
+        files.append("sources", customers);
+        files.append("source_roles", JSON.stringify(["orders", "customers"]));
+        if (!templateProposal) {
+          setPhase("Inspecting template and proposing field mappings");
+          if (Object.keys(mappingOverrides).length) files.append("explicit_mappings", JSON.stringify(mappingOverrides));
+          const proposal = await apiJson<TemplateProposal>(await fetch(`${API}/template-transforms/proposals`, { method: "POST", body: files }));
+          setTemplateProposal(proposal);
+          setTemplateResult(null);
+          return;
+        }
+        setPhase("Cleaning, joining, deriving, writing, and reopening the template");
+        files.append("policy", document);
+        files.append("plan", JSON.stringify(canonicalTemplatePlan(templateProposal)));
+        const result = await apiJson<TemplateResult>(await fetch(`${API}/template-transforms/executions`, { method: "POST", body: files }));
+        setTemplateResult(result);
+        return;
+      }
       if (demo === "sales" && customers && targets) {
         setPhase("Cleaning, joining, verifying, and building workbook");
         const body = new FormData();
@@ -160,8 +210,37 @@ export default function WorkspacePage() {
     }
   }
 
-  const hasInputs = Boolean(dataset && document && (demo === "grades" || (customers && targets)));
-  const canRun = Boolean(hasInputs && goal.trim() && runtime?.status === "ready" && !busy);
+  async function confirmTemplateMappings() {
+    if (busy || !dataset || !customers || !templateTarget || unresolvedTemplateFields.some((item) => !mappingOverrides[item.target_field]?.trim())) return;
+    setBusy(true);
+    setError(null);
+    setTemplateResult(null);
+    setPhase("Validating confirmed field mappings");
+    const files = new FormData();
+    files.append("target", templateTarget);
+    files.append("sources", dataset);
+    files.append("sources", customers);
+    files.append("source_roles", JSON.stringify(["orders", "customers"]));
+    files.append("explicit_mappings", JSON.stringify(mappingOverrides));
+    try {
+      const proposal = await apiJson<TemplateProposal>(await fetch(`${API}/template-transforms/proposals`, { method: "POST", body: files }));
+      setTemplateProposal(proposal);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unexpected mapping validation error");
+    } finally {
+      setBusy(false);
+      setPhase(null);
+    }
+  }
+
+  const hasInputs = Boolean(dataset && document && (
+    demo === "grades" || (demo === "sales" && customers && targets) || (demo === "template" && customers && templateTarget)
+  ));
+  const selectedTemplatePlan = canonicalTemplatePlan(templateProposal);
+  const derivedTargets = new Set(selectedTemplatePlan?.derivations.map((item) => item.target_field) ?? []);
+  const unresolvedTemplateFields = templateProposal?.clarifications.filter((item) => !derivedTargets.has(item.target_field)) ?? [];
+  const mappingOverridesComplete = unresolvedTemplateFields.every((item) => Boolean(mappingOverrides[item.target_field]?.trim()));
+  const canRun = Boolean(hasInputs && goal.trim() && runtime?.status === "ready" && !busy && (demo !== "template" || !templateProposal || unresolvedTemplateFields.length === 0));
   const runtimeLabel = runtime
     ? runtime.orchestrator_status === "demo"
       ? "Demo provider"
@@ -185,29 +264,40 @@ export default function WorkspacePage() {
       <section className="composer">
         <label htmlFor="demo">Demonstration workflow</label>
         <select id="demo" className="modePicker" value={demo} disabled={busy} onChange={(event) => {
-          const next = event.target.value as "grades" | "sales";
+          const next = event.target.value as "grades" | "sales" | "template";
           setDemo(next);
           setGoal(next === "grades"
             ? "According to the grading policy, what score do I need on my final to finish with an A?"
-            : "Prepare the August sales report. Clean the transaction data, compare performance against targets by region, identify the largest drivers of underperformance, calculate salesperson commissions according to the policy, generate appropriate charts, and export a management workbook while preserving the original data.");
+            : next === "template"
+              ? "Prepare this month's submission in the supplied template. Preserve its structure, derive net sales, apply the documented commission policy, verify the output, and save a reusable workflow."
+              : "Prepare the August sales report. Clean the transaction data, compare performance against targets by region, identify the largest drivers of underperformance, calculate salesperson commissions according to the policy, generate appropriate charts, and export a management workbook while preserving the original data.");
           setDataset(null); setDocument(null); setCustomers(null); setTargets(null); setExecution(null);
+          setTemplateTarget(null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({});
           setDatasetInfo("No dataset selected"); setDocumentInfo("No document selected");
-        }}><option value="grades">Grades + syllabus</option><option value="sales">August sales report</option></select>
-        {demo === "sales" && <div className="promise" aria-label="North-star workflow outcomes"><span>01 · Inspect & clean</span><span>02 · Retrieve & calculate</span><span>03 · Verify & export</span></div>}
+        }}><option value="grades">Grades + syllabus</option><option value="sales">August sales report</option><option value="template">Transform to supplied template</option></select>
+        {(demo === "sales" || demo === "template") && <div className="promise" aria-label="Workflow outcomes"><span>01 · Inspect & map</span><span>02 · Transform & derive</span><span>03 · Verify & export</span></div>}
         <label htmlFor="goal">What should the workspace accomplish?</label>
         <textarea id="goal" value={goal} onChange={(event) => setGoal(event.target.value)} required maxLength={10000} />
         <div className="uploads">
-          <label className="upload">{demo === "grades" ? "Structured grade data" : "August transactions"}<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setDataset(event.target.files?.[0] ?? null); setDatasetInfo("Awaiting inspection"); }} /><small>{dataset?.name ?? datasetInfo}</small></label>
-          <label className="upload">{demo === "grades" ? "Grading policy PDF" : "Commission policy PDF"}<input type="file" accept=".pdf,application/pdf" disabled={busy} onChange={(event) => { setDocument(event.target.files?.[0] ?? null); setDocumentInfo("Awaiting ingestion"); }} /><small>{document?.name ?? documentInfo}</small></label>
+          <label className="upload">{demo === "grades" ? "Structured grade data" : demo === "template" ? "Raw orders" : "August transactions"}<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setDataset(event.target.files?.[0] ?? null); setDatasetInfo("Awaiting inspection"); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{dataset?.name ?? datasetInfo}</small></label>
+          <label className="upload">{demo === "grades" ? "Grading policy PDF" : demo === "template" ? "Reporting policy PDF" : "Commission policy PDF"}<input type="file" accept=".pdf,application/pdf" disabled={busy} onChange={(event) => { setDocument(event.target.files?.[0] ?? null); setDocumentInfo("Awaiting ingestion"); setTemplateResult(null); }} /><small>{document?.name ?? documentInfo}</small></label>
           {demo === "sales" && <><label className="upload">Customer regions<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => setCustomers(event.target.files?.[0] ?? null)} /><small>{customers?.name ?? "No customer file selected"}</small></label><label className="upload">Regional targets<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => setTargets(event.target.files?.[0] ?? null)} /><small>{targets?.name ?? "No target file selected"}</small></label></>}
+          {demo === "template" && <><label className="upload">Customer master<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setCustomers(event.target.files?.[0] ?? null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{customers?.name ?? "No customer master selected"}</small></label><label className="upload">Required target template<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setTemplateTarget(event.target.files?.[0] ?? null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{templateTarget?.name ?? "No target template selected"}</small></label></>}
         </div>
-        <button disabled={!canRun} title={runtime?.status === "not_ready" ? "Complete backend configuration before running tasks" : undefined}>{busy ? phase ?? "Executing workflow…" : demo === "sales" ? "Build verified August report" : "Run verified task"}</button>
+        <button disabled={!canRun} title={runtime?.status === "not_ready" ? "Complete backend configuration before running tasks" : unresolvedTemplateFields.length ? "Resolve required fields before execution" : undefined}>{busy ? phase ?? "Executing workflow…" : demo === "template" ? templateProposal ? "Execute verified template transform" : "Inspect and propose mappings" : demo === "sales" ? "Build verified August report" : "Run verified task"}</button>
         {busy && <p className="progress" role="status" aria-live="polite"><span />{phase ?? "Executing bounded workflow"}. Source uploads remain unchanged.</p>}
         {!hasInputs ? <p className="hint">Select all required sample inputs to enable the task.</p> : null}
         {error && <p className="error" role="alert">{error}</p>}
       </section>
     </form>
-    <div className="results">
+    {demo === "template" ? <div className="results">
+      <section className="panel answer"><div className="panelTitle"><h2>Field mapping plan</h2><span className={`pill ${templateResult?.status ?? templateProposal?.status ?? "idle"}`}>{templateResult?.status?.replaceAll("_", " ") ?? templateProposal?.status?.replaceAll("_", " ") ?? "Awaiting inspection"}</span></div>
+        {templateProposal ? <><p className="templateSummary">Target: {templateProposal.plan.target_filename} · {templateProposal.plan.target_headers.length} columns · {templateProposal.template.sheets.length || 1} sheet(s)</p>{isCanonicalFixtureProposal(templateProposal) && <p className="fixtureNote">Canonical demo rules detected: customer join, net-sales calculation, and evidence-bound commission derivation are applied only to the shipped sample schemas.</p>}<div className="mappingTable" role="table" aria-label="Proposed field mappings">{templateProposal.plan.mappings.map((mapping) => <div className="mappingRow" role="row" key={mapping.target_field}><strong>{mapping.target_field}</strong><span>{derivedTargets.has(mapping.target_field) ? "Deterministic derivation" : mapping.mapping_type === "template_formula" ? "Trusted template formula" : mapping.source_role && mapping.source_field ? `${mapping.source_role}.${mapping.source_field}` : "Unresolved"}</span><span className={`pill ${derivedTargets.has(mapping.target_field) ? "verified" : mapping.status}`}>{derivedTargets.has(mapping.target_field) ? "derived" : mapping.status.replaceAll("_", " ")}</span><small>{Math.round(mapping.confidence * 100)}% · {mapping.evidence}</small></div>)}</div></> : <p>Upload the raw orders, customer master, reporting policy, and target workbook to inspect schemas and propose mappings.</p>}
+        {unresolvedTemplateFields.length > 0 && <div className="warnings clarification"><strong>Clarification required</strong><p>Confirm each source as <code>role.field</code>. Nothing executes until every required field is resolved.</p><div className="clarificationGrid">{unresolvedTemplateFields.map((item) => <label key={item.target_field}><span>{item.target_field}</span><input value={mappingOverrides[item.target_field] ?? ""} placeholder={item.candidate_options[0] ?? "role.field"} disabled={busy} onChange={(event) => setMappingOverrides((current) => ({ ...current, [item.target_field]: event.target.value }))} /><small>{item.reason}{item.candidate_options.length ? ` Options: ${item.candidate_options.join(", ")}` : ""}</small></label>)}</div><button type="button" className="confirmMappings" disabled={busy || !mappingOverridesComplete} onClick={confirmTemplateMappings}>Validate confirmed mappings</button></div>}
+      </section>
+      <section className="panel"><div className="panelTitle"><h2>Validation</h2><span>{templateResult?.validation?.checks.filter((item) => item.passed).length ?? 0} checks passed</span></div>{templateResult?.validation ? <><p>{templateResult.validation.input_row_count} input rows → {templateResult.validation.output_row_count} output rows</p>{templateResult.validation.errors.map((item) => <p className="error" key={item}>{item}</p>)}{templateResult.validation.warnings.map((item) => <p className="warningText" key={item}>{item}</p>)}<ul className="checkList">{templateResult.validation.checks.map((item) => <li key={item.name} className={item.passed ? "passed" : "failed"}>{item.passed ? "✓" : "×"} {item.detail}</li>)}</ul></> : <p className="muted">Schema, required values, joins, workbook reopen, sheet preservation, and formulas are checked before completion.</p>}</section>
+      <section className="panel"><div className="panelTitle"><h2>Artifact & provenance</h2><span>{templateResult?.provenance.length ?? 0} fields traced</span></div>{templateResult?.artifact && <a className="artifactLink" href={`${API}${templateResult.artifact.download_url}`}>Download completed template<small>{templateResult.artifact.filename} · {templateResult.artifact.row_count} rows</small></a>}{templateResult?.saved_workflow && <div className="workflowCard"><span>Reusable workflow saved</span><strong>{templateResult.saved_workflow.name}</strong><small>Version {templateResult.saved_workflow.version} · source and template drift checked</small></div>}<div className="provenanceList">{templateResult?.provenance.map((item) => <p key={item.target_field}><strong>{item.target_field}</strong><span>{item.source_fields.join(" + ") || "Template"} → {item.transformation}{item.policy_evidence_ids.length ? ` · ${item.policy_evidence_ids.length} policy citation(s)` : ""}</span></p>)}</div>{!templateResult && <p className="muted">Successful execution will expose the exact output, field lineage, validation, and saved workflow here.</p>}</section>
+    </div> : <div className="results">
       {execution && execution.evidence.length > 0 && <section className="panel policyEvidence">
         <h2>Retrieved policy passages</h2>
         {execution.evidence.map((item) => <blockquote key={item.source.chunk_id}>
@@ -218,6 +308,34 @@ export default function WorkspacePage() {
       <section className="panel answer"><div className="panelTitle"><h2>Management answer</h2><span className={`pill ${execution?.verification?.status ?? "idle"}`}>{execution?.verification?.status?.replaceAll("_", " ") ?? "Awaiting task"}</span></div><p>{execution?.answer ?? "Your grounded answer will appear here after deterministic tools finish."}</p><div className="deliverables">{execution?.artifacts.map((artifact) => <a className="artifactLink" href={`${API}${artifact.download_url}`} key={artifact.artifact_id}>Download management workbook<small>{artifact.filename} · {artifact.row_count} regional rows</small></a>)}{execution?.saved_workflow && <div className="workflowCard"><span>Reusable recipe saved</span><strong>{execution.saved_workflow.name}</strong><small>Version {execution.saved_workflow.version} · schema drift checked on rerun</small></div>}</div>{execution?.failure_reason && <p className="error">{execution.failure_reason}</p>}</section>
       <section className="panel tracePanel"><div className="panelTitle"><h2>Execution trace</h2><span>{execution?.stages.length ?? 0} stages</span></div><ol className="trace">{execution?.stages.map((stage, index) => <li key={`${stage.name}-${index}`}><span className={`dot ${stage.status === "completed" ? "ok" : stage.status === "warning" ? "warn" : "fail"}`} /><div><div className="stageTitle"><strong>{stage.name}</strong><span>{stage.status}</span></div><p>{stage.explanation}</p>{Object.keys(stage.row_counts).length > 0 && <div className="facts">{Object.entries(stage.row_counts).map(([label, value]) => <small key={label}>{label.replaceAll("_", " ")}: {value}</small>)}</div>}<small>{stage.tool_name ? `${stage.tool_name} · ` : ""}{stage.evidence_ids.length} evidence · {stage.artifact_ids.length} artifacts{stage.verification_result ? ` · ${stage.verification_result.replaceAll("_", " ")}` : ""}</small></div></li>) ?? <li className="empty">Goal, plan, tool outcomes, evidence, verification, and artifacts will appear here.</li>}</ol>{execution && <details className="technicalTrace"><summary>Inspect validated tool calls</summary>{execution.trace.map((step) => <article key={step.step}><strong>{step.step}. {step.requested_tool}</strong><span>{step.duration_ms.toFixed(1)} ms</span><p>{step.observation}</p></article>)}</details>}</section>
       <section className="panel"><div className="panelTitle"><h2>Evidence & verification</h2><span>{execution?.citations.length ?? 0} citations</span></div>{execution?.warnings.length ? <div className="warnings"><strong>Data and join warnings</strong>{execution.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}{execution?.citations.map((citation) => <article className="citation" key={citation.chunk_id}><strong>{citation.filename} · page {citation.page_number}</strong><code>{citation.chunk_id}</code></article>)}{execution?.verification?.findings.map((finding, index) => <article className="finding" key={`${finding.claim}-${index}`}><span className={`pill ${finding.status}`}>{finding.status.replaceAll("_", " ")}</span><strong>{finding.claim}</strong><p>{finding.explanation}</p></article>) ?? <p className="muted">Source pages and claim checks will appear after execution.</p>}</section>
-    </div>
+    </div>}
   </main>;
+}
+
+function canonicalTemplatePlan(proposal: TemplateProposal | null): TemplatePlan | null {
+  if (!proposal) return null;
+  if (!isCanonicalFixtureProposal(proposal)) return proposal.plan;
+  return {
+    ...proposal.plan,
+    joins: [{ right_role: "customers", left_on: ["orders.customer_id"], right_on: ["cust_id"], how: "left", block_many_to_many: true, block_row_multiplication: true, max_unmatched_left_percentage: 0 }],
+    derivations: [
+      { target_field: "Net Sales", operation: "subtract", inputs: [{ source_role: "orders", source_field: "gross_sales", transformation: "normalize_currency" }, { source_role: "orders", source_field: "returns", transformation: "none" }], separator: " " },
+      { target_field: "Commission", operation: "policy_multiply", inputs: [{ source_role: "target", source_field: "Net Sales", transformation: "none" }], separator: " ", policy_query: "commission policy rate" },
+    ],
+    unique_fields: ["Order ID"],
+  };
+}
+
+function isCanonicalFixtureProposal(proposal: TemplateProposal): boolean {
+  const expectedHeaders = ["Order ID", "Customer Name", "Region", "Net Sales", "Commission", "Total"];
+  const expectedSources: Record<string, { filename: string; columns: string[] }> = {
+    orders: { filename: "raw_orders.xlsx", columns: ["order_id", "customer_id", "gross_sales", "returns", "eligible_sales"] },
+    customers: { filename: "customer_master.csv", columns: ["cust_id", "customer_name", "territory"] },
+  };
+  if (proposal.plan.target_filename !== "required_template.xlsx" || JSON.stringify(proposal.plan.target_headers) !== JSON.stringify(expectedHeaders)) return false;
+  if (proposal.plan.source_roles.length !== 2 || proposal.sources.length !== 2) return false;
+  return proposal.sources.every((source) => {
+    const expected = expectedSources[source.role];
+    return Boolean(expected && source.inspection.filename === expected.filename && JSON.stringify(source.inspection.columns) === JSON.stringify(expected.columns));
+  });
 }
