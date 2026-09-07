@@ -1,0 +1,23 @@
+{
+  "name": "Agentic Intelligence Workspace",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "ubuntu",
+  "install": "./scripts/cloud-agent-install.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": "cd backend && APP_MODE=demo .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    },
+    {
+      "name": "frontend",
+      "command": "cd frontend && NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev -- --hostname 0.0.0.0 --port 3000"
+    }
+  ],
+  "ports": [
+    { "name": "API", "port": 8000 },
+    { "name": "Frontend", "port": 3000 }
+  ]
+}
