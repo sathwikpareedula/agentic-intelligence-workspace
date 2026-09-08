@@ -925,6 +925,8 @@ def _workflow_run_summary(run, *, include_facts: bool) -> dict[str, Any]:
         "warnings": run.warnings,
         "artifacts": [item.model_dump(mode="json") for item in run.artifacts],
         "drift_findings": [item.model_dump(mode="json") for item in run.drift_findings],
+        "step_summaries": [item.model_dump(mode="json") for item in run.step_summaries],
+        "diagnostics": [item.model_dump(mode="json") for item in run.diagnostics],
     }
     if include_facts:
         result["facts"] = [item.model_dump(mode="json") for item in run.facts]

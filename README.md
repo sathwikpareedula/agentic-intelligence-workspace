@@ -23,6 +23,7 @@ This project turns natural-language goals over structured data and unstructured 
 - Bounded JSON/Parquet dataset adapters, UTF-8 text document ingestion through the existing retriever, a read-only external PostgreSQL connector, and a GET-only REST JSON connector with SSRF protections and secret references.
 - Typed deterministic analytics over workspace datasets, with named numeric facts, existing-verifier grounding, optional validated read-only SQL against external PostgreSQL, and a focused analytics UI. DuckDB is not used.
 - Immutable workflow-run history with lifecycle, safe input/source snapshots, schema/type drift findings, verification summaries, artifacts, and deterministic same-workflow “What Changed?” comparisons.
+- Compact run observability and drift deltas for per-column missing values, duplicate rows, bounded categories/unique counts, schema columns/types, join diagnostics, warnings, artifacts, and step outcomes. These are labeled drift, not statistical anomalies.
 
 ## Quick start
 
@@ -80,7 +81,7 @@ The Transform-to-Template evaluation covers all 18 controlled cases from exact a
 
 `sample_data/grades.csv` and `sample_data/syllabus.pdf` exercise cited policy evidence plus deterministic weighted-grade calculation. The August sales files and `commission_policy.pdf` exercise cleaning, join diagnostics, targets, underperformance, deterministic commissions, verification, a management workbook, and a saved/rerunnable recipe. Tests contain the executable end-to-end paths and fixed expected outputs.
 
-`sample_data/analytics_sales.csv` and `sample_data/analytics_sales_september.csv` are compatible period inputs for the workflow-run evaluator. It saves one typed grouped-sales workflow, records separate August and September runs, and compares exact metric, group, row-count, schema, verification, warning, and artifact changes. The browser’s saved-workflow panel can create runs from the currently selected inputs, list immutable history, and compare the latest two completed runs. Comparisons report observations only; they do not invent business causes.
+`sample_data/analytics_sales.csv` and `sample_data/analytics_sales_september.csv` are compatible period inputs for the workflow-run evaluator. It saves one typed grouped-sales workflow, records separate August and September runs, and compares exact metric, group, row-count, schema, quality, category, verification, warning, artifact, join-diagnostic, and step changes. The browser’s saved-workflow panel can create runs from the currently selected inputs, list immutable history, and compare the latest two completed runs in Business Metrics, Data Quality, Join Quality, Schema/Sources, and Trust/Execution sections. Comparisons report observations only; they do not invent business causes.
 
 ### Recruiter north-star: August sales management report
 

@@ -111,9 +111,9 @@ class PostgresWorkflowRepository:
                         (id, workflow_id, workflow_version, status, started_at, completed_at,
                          step_overrides, observations, failed_step, error, artifact_ids,
                          definition_fingerprint, lifecycle, input_snapshots, facts, artifacts,
-                         warnings, drift_findings, verification)
+                         warnings, drift_findings, verification, step_summaries, diagnostics)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s, %s)
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         run.run_id,
@@ -135,6 +135,8 @@ class PostgresWorkflowRepository:
                         Jsonb(run.warnings),
                         Jsonb([item.model_dump(mode="json") for item in run.drift_findings]),
                         Jsonb(run.verification.model_dump(mode="json")) if run.verification else None,
+                        Jsonb([item.model_dump(mode="json") for item in run.step_summaries]),
+                        Jsonb([item.model_dump(mode="json") for item in run.diagnostics]),
                     ),
                 )
         except (psycopg.Error, ValueError) as exc:
@@ -171,6 +173,7 @@ _RUN_SELECT = """
 SELECT id, workflow_id, workflow_version, status, observations, failed_step, error,
        started_at, completed_at, definition_fingerprint, lifecycle, input_snapshots,
        facts, artifacts, warnings, drift_findings, verification
+       , step_summaries, diagnostics
 FROM workflow_runs
 """
 
@@ -195,5 +198,7 @@ def _run_from_row(row) -> WorkflowRun:
             "warnings": row[14] or [],
             "drift_findings": row[15] or [],
             "verification": row[16],
+            "step_summaries": row[17] or [],
+            "diagnostics": row[18] or [],
         }
     )

@@ -109,11 +109,13 @@ h2 { margin:0; font-size:.95rem; letter-spacing:.02em; }
 .runHistory li p,.runHistory li a { grid-column:1/-1; margin:0; font-size:.82rem; line-height:1.4; }
 .runHistory li a { color:var(--green); font-weight:700; }
 .changeList { display:grid; gap:8px; }
+.changeList h4 { margin:10px 0 0; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; }
 .observedLabel { margin:0 0 3px; padding:9px 11px; color:#355c4b; background:#f0faf4; border-left:3px solid var(--green); font-size:.78rem; font-weight:700; }
 .changeList article { padding:11px 12px; border:1px solid var(--line); border-radius:9px; }
 .changeList article>div { display:flex; justify-content:space-between; gap:12px; }
 .changeList article p { margin:5px 0; color:var(--ink); }
 .changeList article small { color:var(--muted); line-height:1.4; }
+.changeList article>small { display:block; margin-top:4px; }
 .changeStatus { color:var(--muted); font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; }
 .changeStatus.added,.changeStatus.changed,.changeStatus.content_changed { color:var(--green); }
 .changeStatus.removed,.changeStatus.incompatible { color:var(--red); }

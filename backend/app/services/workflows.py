@@ -17,15 +17,21 @@ from app.agent.models import ToolObservation
 from app.agent.tools import DatasetInput, ToolRegistry
 from app.models.workflows import (
     RunArtifact,
+    RunCategoryChange,
+    RunCategorySnapshot,
     RunComparison,
     RunCountChange,
     RunDriftFinding,
+    RunDiagnostic,
     RunFact,
     RunFactReference,
     RunInputSnapshot,
     RunLifecycleEvent,
     RunMetricChange,
+    RunQualityChange,
     RunSnapshotChange,
+    RunStepChange,
+    RunStepSummary,
     RunVerificationSummary,
     RunWarningChange,
     Workflow,
@@ -196,6 +202,8 @@ class WorkflowService:
                 if step.expected_schemas is not None:
                     _check_nested_schemas(validated, step.expected_schemas, step.expected_schema_types or {}, index)
                 observation = tool.handler(validated)
+                if observation.tool_name is None:
+                    observation = observation.model_copy(update={"tool_name": step.tool})
                 snapshots = _merge_observation_provenance(snapshots, index, observation)
             except Exception as exc:
                 message = _validation_summary(exc) if isinstance(exc, ValidationError) else str(exc)
@@ -207,7 +215,7 @@ class WorkflowService:
                 return self._save_run(_failed(workflow, observations, index, observation.summary, started_at, lifecycle=lifecycle, snapshots=snapshots), overrides)
         lifecycle.append(_event("verifying"))
         try:
-            facts, artifacts, warnings = _collect_run_outputs(observations)
+            facts, artifacts, warnings, step_summaries, diagnostics = _collect_run_outputs(observations)
         except WorkflowError as exc:
             return self._save_run(_failed(workflow, observations, len(workflow.steps), str(exc), started_at, lifecycle=lifecycle, snapshots=snapshots), overrides)
         lifecycle.append(_event("succeeded"))
@@ -222,6 +230,7 @@ class WorkflowService:
             definition_fingerprint=_workflow_fingerprint(workflow), lifecycle=lifecycle,
             input_snapshots=_unique_snapshots(snapshots), facts=facts, artifacts=artifacts,
             warnings=warnings, drift_findings=drift_findings, verification=verification,
+            step_summaries=step_summaries, diagnostics=diagnostics,
         )
         return self._save_run(run, overrides)
 
@@ -349,6 +358,22 @@ def _failed(
     events = list(lifecycle or [])
     events.append(_event("blocked" if blocked else "failed"))
     warnings = [warning for observation in observations for warning in observation.warnings]
+    step_summaries, diagnostics = _collect_observability(observations)
+    if not step_summaries or step_summaries[-1].step != index:
+        tool_name = workflow.steps[index - 1].tool if 0 < index <= len(workflow.steps) else "workflow.validation"
+        step_summaries.append(
+            RunStepSummary(
+                step=index,
+                tool_name=tool_name,
+                status="blocked" if blocked else "failed",
+                summary=str(error)[:2_000] or "Workflow execution failed.",
+                warning_count=0,
+                artifact_count=0,
+                source_count=0,
+            )
+        )
+    elif blocked:
+        step_summaries[-1] = step_summaries[-1].model_copy(update={"status": "blocked"})
     return WorkflowRun(
         workflow_id=workflow.workflow_id, version=workflow.version, status="failed",
         observations=observations, failed_step=index, error=error,
@@ -357,6 +382,7 @@ def _failed(
         input_snapshots=_unique_snapshots(snapshots or []), warnings=warnings,
         drift_findings=drift_findings or [],
         verification=RunVerificationSummary(status="failed", fact_count=0, warning_count=len(warnings)),
+        step_summaries=step_summaries, diagnostics=diagnostics,
     )
 
 
@@ -416,6 +442,7 @@ def _snapshot_inputs(step: int, value, path: str = "input") -> list[RunInputSnap
             dataset = load_dataset(value["filename"], content, value.get("sheet"))
             inspection = inspect_dataset(dataset)
             column_types = {item.name: item.data_type for item in inspection.column_details}
+            missing_by_column, categories = _dataset_quality(dataset)
             schema = {"columns": inspection.columns, "types": column_types}
             snapshots.append(
                 RunInputSnapshot(
@@ -425,6 +452,7 @@ def _snapshot_inputs(step: int, value, path: str = "input") -> list[RunInputSnap
                     columns=inspection.columns, column_types=column_types,
                     missing_value_count=sum(item.missing_count for item in inspection.column_details),
                     duplicate_row_count=inspection.duplicate_row_count,
+                    missing_by_column=missing_by_column, categories=categories,
                 )
             )
             return snapshots
@@ -480,6 +508,8 @@ def _merge_observation_provenance(
     schema_fingerprint = None
     missing_count = None
     duplicate_count = None
+    missing_by_column: dict[str, int] = {}
+    categories: dict[str, RunCategorySnapshot] = {}
     if isinstance(inspection, dict):
         columns = [str(item) for item in inspection.get("columns", [])]
         details = inspection.get("column_details", [])
@@ -493,6 +523,14 @@ def _merge_observation_provenance(
             int(item.get("missing_count", 0)) for item in details if isinstance(item, dict)
         )
         duplicate_count = inspection.get("duplicate_row_count")
+    dataset_payload = result.get("dataset")
+    if isinstance(dataset_payload, dict) and isinstance(dataset_payload.get("content_base64"), str):
+        try:
+            content = base64.b64decode(dataset_payload["content_base64"], validate=True)
+            loaded = load_dataset(dataset_payload["filename"], content, dataset_payload.get("sheet"))
+            missing_by_column, categories = _dataset_quality(loaded)
+        except (KeyError, ValueError):
+            missing_by_column, categories = {}, {}
     updated = list(snapshots)
     candidates = [
         index for index, snapshot in enumerate(updated)
@@ -511,9 +549,27 @@ def _merge_observation_provenance(
             "column_types": column_types,
             "missing_value_count": missing_count,
             "duplicate_row_count": duplicate_count,
+            "missing_by_column": missing_by_column,
+            "categories": categories,
         }
     )
     return updated
+
+
+def _dataset_quality(dataset) -> tuple[dict[str, int], dict[str, RunCategorySnapshot]]:
+    frame = dataset.frame
+    missing = {str(column): int(frame[column].isna().sum()) for column in frame.columns}
+    categories: dict[str, RunCategorySnapshot] = {}
+    for column in frame.columns:
+        series = frame[column]
+        if getattr(series.dtype, "kind", "") in {"i", "u", "f", "c"}:
+            continue
+        values = sorted({str(value) for value in series.dropna().tolist()})
+        complete = len(values) <= 100 and all(len(value) <= 200 for value in values)
+        categories[str(column)] = RunCategorySnapshot(
+            unique_count=len(values), values=values if complete else [], values_complete=complete
+        )
+    return missing, categories
 
 
 def _collect_run_outputs(observations: list[ToolObservation]):
@@ -552,7 +608,63 @@ def _collect_run_outputs(observations: list[ToolObservation]):
         for artifact_id in observation.artifact_ids:
             parsed = UUID(artifact_id)
             artifacts.setdefault(parsed, RunArtifact(artifact_id=parsed))
-    return list(facts.values()), list(artifacts.values()), warnings
+    step_summaries, diagnostics = _collect_observability(observations)
+    return list(facts.values()), list(artifacts.values()), warnings, step_summaries, diagnostics
+
+
+def _collect_observability(
+    observations: list[ToolObservation],
+) -> tuple[list[RunStepSummary], list[RunDiagnostic]]:
+    steps: list[RunStepSummary] = []
+    diagnostics: dict[str, RunDiagnostic] = {}
+    for step, observation in enumerate(observations, 1):
+        steps.append(
+            RunStepSummary(
+                step=step,
+                tool_name=observation.tool_name or "unknown",
+                status="succeeded" if observation.success else "failed",
+                summary=observation.summary[:2_000] or "No summary was recorded.",
+                warning_count=len(observation.warnings),
+                artifact_count=len(observation.artifact_ids),
+                source_count=len(observation.source_ids),
+            )
+        )
+        result = observation.result or {}
+        for root in ("join_diagnostics", "target_join_diagnostics", "data_quality", "trace_metadata", "diagnostics"):
+            value = result.get(root)
+            if isinstance(value, dict):
+                for path, raw_value in _numeric_leaves(value, root):
+                    if isinstance(raw_value, bool):
+                        numeric = float(int(raw_value))
+                    elif isinstance(raw_value, (int, float)) and math.isfinite(float(raw_value)):
+                        numeric = float(raw_value)
+                    else:
+                        continue
+                    diagnostic_id = f"step.{step}.{path}"
+                    if diagnostic_id in diagnostics:
+                        raise WorkflowError(f"Workflow produced an ambiguous diagnostic identity '{diagnostic_id}'.")
+                    lowered = path.casefold()
+                    kind = "join" if any(marker in lowered for marker in ("join", "unmatched", "multiplication")) else "quality"
+                    unit = "percent" if any(marker in lowered for marker in ("percent", "_pct", "percentage")) else "count" if any(marker in lowered for marker in ("row", "count", "duplicate", "missing", "unmatched")) else "value"
+                    diagnostics[diagnostic_id] = RunDiagnostic(
+                        diagnostic_id=diagnostic_id,
+                        step=step,
+                        kind=kind,
+                        label=path.replace("_", " ").replace(".", " · "),
+                        value=numeric,
+                        unit=unit,
+                    )
+    return steps, list(diagnostics.values())
+
+
+def _numeric_leaves(value: dict, prefix: str):
+    for key in sorted(value):
+        child = value[key]
+        path = f"{prefix}.{key}"
+        if isinstance(child, dict):
+            yield from _numeric_leaves(child, path)
+        else:
+            yield path, child
 
 
 def _compare_completed_runs(previous: WorkflowRun, current: WorkflowRun) -> RunComparison:
@@ -591,6 +703,8 @@ def _compare_completed_runs(previous: WorkflowRun, current: WorkflowRun) -> RunC
     current_snapshots = _snapshot_map(current)
     snapshot_changes: list[RunSnapshotChange] = []
     row_counts: list[RunCountChange] = []
+    quality_changes: list[RunQualityChange] = []
+    category_changes: list[RunCategoryChange] = []
     for key in sorted(set(previous_snapshots) | set(current_snapshots)):
         before = previous_snapshots.get(key)
         after = current_snapshots.get(key)
@@ -604,6 +718,13 @@ def _compare_completed_runs(previous: WorkflowRun, current: WorkflowRun) -> RunC
             snapshot_status, explanation = "unchanged", "Input content and schema are unchanged."
         else:
             snapshot_status, explanation = "content_changed", "Input content changed while its schema remained compatible."
+        added_columns = sorted(set(after.columns) - set(before.columns)) if before and after else []
+        removed_columns = sorted(set(before.columns) - set(after.columns)) if before and after else []
+        type_changes = {
+            column: {"previous": before.column_types[column], "current": after.column_types[column]}
+            for column in sorted(set(before.column_types) & set(after.column_types))
+            if before.column_types[column] != after.column_types[column]
+        } if before is not None and after is not None else {}
         snapshot_changes.append(
             RunSnapshotChange(
                 input_key=key, status=snapshot_status, explanation=explanation,
@@ -611,6 +732,7 @@ def _compare_completed_runs(previous: WorkflowRun, current: WorkflowRun) -> RunC
                 current_fingerprint=after.fingerprint if after else None,
                 previous_schema_fingerprint=before.schema_fingerprint if before else None,
                 current_schema_fingerprint=after.schema_fingerprint if after else None,
+                added_columns=added_columns, removed_columns=removed_columns, type_changes=type_changes,
             )
         )
         before_count = before.row_count if before else None
@@ -626,6 +748,47 @@ def _compare_completed_runs(previous: WorkflowRun, current: WorkflowRun) -> RunC
                     percent_change=percent, percent_change_reason=reason,
                 )
             )
+        if before is not None and after is not None:
+            for column in sorted(set(before.missing_by_column) | set(after.missing_by_column)):
+                quality_changes.append(
+                    _quality_change(
+                        f"{key}.missing.{column}", "quality", f"Missing values · {column}",
+                        before.missing_by_column.get(column), after.missing_by_column.get(column),
+                        previous.run_id, current.run_id,
+                    )
+                )
+            if before.duplicate_row_count is not None or after.duplicate_row_count is not None:
+                quality_changes.append(
+                    _quality_change(
+                        f"{key}.duplicates", "quality", "Duplicate rows",
+                        before.duplicate_row_count, after.duplicate_row_count,
+                        previous.run_id, current.run_id,
+                    )
+                )
+            for column in sorted(set(before.categories) | set(after.categories)):
+                old_category = before.categories.get(column)
+                new_category = after.categories.get(column)
+                quality_changes.append(
+                    _quality_change(
+                        f"{key}.unique.{column}", "category", f"Unique values · {column}",
+                        old_category.unique_count if old_category else None,
+                        new_category.unique_count if new_category else None,
+                        previous.run_id, current.run_id,
+                    )
+                )
+                if old_category is not None and new_category is not None:
+                    complete = old_category.values_complete and new_category.values_complete
+                    category_changes.append(
+                        RunCategoryChange(
+                            input_key=key, column=column,
+                            previous_unique_count=old_category.unique_count,
+                            current_unique_count=new_category.unique_count,
+                            added=sorted(set(new_category.values) - set(old_category.values)) if complete else [],
+                            removed=sorted(set(old_category.values) - set(new_category.values)) if complete else [],
+                            values_complete=complete,
+                            previous_run_id=previous.run_id, current_run_id=current.run_id,
+                        )
+                    )
 
     previous_warnings = Counter(previous.warnings)
     current_warnings = Counter(current.warnings)
@@ -637,12 +800,49 @@ def _compare_completed_runs(previous: WorkflowRun, current: WorkflowRun) -> RunC
         for warning in sorted(set(previous_warnings) | set(current_warnings))
         if previous_warnings[warning] != current_warnings[warning]
     ]
+    previous_diagnostics = {item.diagnostic_id: item for item in previous.diagnostics}
+    current_diagnostics = {item.diagnostic_id: item for item in current.diagnostics}
+    for diagnostic_id in sorted(set(previous_diagnostics) | set(current_diagnostics)):
+        before = previous_diagnostics.get(diagnostic_id)
+        after = current_diagnostics.get(diagnostic_id)
+        exemplar = after or before
+        assert exemplar is not None
+        if before is not None and after is not None and (before.kind, before.unit) != (after.kind, after.unit):
+            raise WorkflowError(f"Diagnostic '{diagnostic_id}' changed meaning between workflow runs.")
+        quality_changes.append(
+            _quality_change(
+                diagnostic_id, "join" if exemplar.kind == "join" else "quality",
+                exemplar.label, before.value if before else None, after.value if after else None,
+                previous.run_id, current.run_id, unit=exemplar.unit,
+            )
+        )
+    previous_steps = {item.step: item for item in previous.step_summaries}
+    current_steps = {item.step: item for item in current.step_summaries}
+    step_changes: list[RunStepChange] = []
+    for step in sorted(set(previous_steps) | set(current_steps)):
+        before = previous_steps.get(step)
+        after = current_steps.get(step)
+        if before is not None and after is not None and before.tool_name != after.tool_name:
+            raise WorkflowError(f"Workflow step {step} changed tool identity between runs.")
+        exemplar = after or before
+        assert exemplar is not None
+        step_changes.append(
+            RunStepChange(
+                step=step, tool_name=exemplar.tool_name,
+                previous_status=before.status if before else None,
+                current_status=after.status if after else None,
+                warning_change=(after.warning_count if after else 0) - (before.warning_count if before else 0),
+                artifact_change=(after.artifact_count if after else 0) - (before.artifact_count if before else 0),
+                previous_run_id=previous.run_id, current_run_id=current.run_id,
+            )
+        )
     return RunComparison(
         workflow_id=previous.workflow_id, previous_run_id=previous.run_id, current_run_id=current.run_id,
         previous_version=previous.version, current_version=current.version, metrics=metrics,
         row_counts=row_counts, snapshots=snapshot_changes, warnings=warning_changes,
         verification_previous=previous.verification, verification_current=current.verification,
         artifact_count_previous=len(previous.artifacts), artifact_count_current=len(current.artifacts),
+        quality=quality_changes, categories=category_changes, steps=step_changes,
     )
 
 
@@ -678,3 +878,25 @@ def _percentage_change(previous: int | float, current: int | float) -> tuple[flo
     if not math.isfinite(value):
         return None, "Percentage change is non-finite and was omitted."
     return value, None
+
+
+def _quality_change(
+    quality_id: str,
+    section: str,
+    label: str,
+    previous: int | float | None,
+    current: int | float | None,
+    previous_run_id: UUID,
+    current_run_id: UUID,
+    *,
+    unit: str = "count",
+) -> RunQualityChange:
+    absolute = float(current) - float(previous) if previous is not None and current is not None else None
+    percent, reason = _percentage_change(previous, current) if previous is not None and current is not None else (None, "Value is unavailable in one run.")
+    return RunQualityChange(
+        quality_id=quality_id, section=section, label=label, unit=unit,
+        previous=float(previous) if previous is not None else None,
+        current=float(current) if current is not None else None,
+        absolute_change=absolute, percent_change=percent, percent_change_reason=reason,
+        previous_run_id=previous_run_id, current_run_id=current_run_id,
+    )

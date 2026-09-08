@@ -118,6 +118,8 @@ def test_postgres_workflow_repository_round_trips_recipe_and_persists_run(monkey
         [],
         [],
         None,
+        [],
+        [],
     )
     connection.row = run_row
     restored_run = repository.get_run(run.run_id)
@@ -234,10 +236,17 @@ def test_initial_migration_owns_all_production_tables() -> None:
 
     run_history = Path(__file__).parents[1] / "migrations" / "versions" / "20260907_0002_workflow_run_history.py"
     run_history_text = run_history.read_text(encoding="utf-8")
-    assert f'revision = "{MIGRATION_HEAD}"' in run_history_text
+    assert 'revision = "20260907_0002"' in run_history_text
     assert 'down_revision = "20260903_0001"' in run_history_text
     for column in (
         "definition_fingerprint", "lifecycle", "input_snapshots", "facts",
         "artifacts", "warnings", "drift_findings",
     ):
         assert f"ADD COLUMN {column}" in run_history_text
+
+    observability = Path(__file__).parents[1] / "migrations" / "versions" / "20260908_0003_workflow_run_observability.py"
+    observability_text = observability.read_text(encoding="utf-8")
+    assert f'revision = "{MIGRATION_HEAD}"' in observability_text
+    assert 'down_revision = "20260907_0002"' in observability_text
+    assert "ADD COLUMN step_summaries" in observability_text
+    assert "ADD COLUMN diagnostics" in observability_text

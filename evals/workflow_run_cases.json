@@ -9,6 +9,11 @@
     {"id": "G_row_count_change", "name": "Row-count change"},
     {"id": "H_run_provenance", "name": "Comparison run provenance"},
     {"id": "I_incompatible_refusal", "name": "Incompatible workflow refusal"},
-    {"id": "J_schema_drift_recorded", "name": "Recorded schema drift"}
+    {"id": "J_schema_drift_recorded", "name": "Recorded schema drift"},
+    {"id": "K_missing_value_delta", "name": "Missing-value delta"},
+    {"id": "L_duplicate_delta", "name": "Duplicate-row delta"},
+    {"id": "M_category_drift", "name": "Category drift"},
+    {"id": "N_step_observability", "name": "Step observability"},
+    {"id": "O_observed_not_anomaly", "name": "Observed drift terminology"}
   ]
 }

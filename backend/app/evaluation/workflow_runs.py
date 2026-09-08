@@ -61,6 +61,27 @@ def _observed_cases() -> dict[str, bool]:
         workflow.workflow_id,
         {1: {"content_base64": _encoded(b"region,salesperson\nNorth,Alice\n")}},
     )
+    quality_workflow = service.create(
+        WorkflowCreate(
+            name="quality drift evaluation",
+            steps=[
+                WorkflowStep(
+                    tool="dataset.inspect",
+                    arguments={
+                        "filename": "quality.csv",
+                        "content_base64": _encoded(b"id,category,value\n1,A,10\n2,B,\n2,B,\n"),
+                    },
+                )
+            ],
+        )
+    )
+    quality_first = service.rerun(quality_workflow.workflow_id, {})
+    quality_second = service.rerun(
+        quality_workflow.workflow_id,
+        {1: {"content_base64": _encoded(b"id,category,value\n1,A,10\n2,C,20\n3,C,30\n")}},
+    )
+    quality_comparison = service.compare_runs(quality_first.run_id, quality_second.run_id)
+    category_change = next(item for item in quality_comparison.categories if item.column == "category")
     return {
         "A_distinct_runs": first.run_id != second.run_id,
         "B_history_order": [item.run_id for item in service.list_runs(workflow.workflow_id, 2, 0)] == [drift.run_id, second.run_id],
@@ -72,6 +93,11 @@ def _observed_cases() -> dict[str, bool]:
         "H_run_provenance": all(item.current is None or item.current.run_id == second.run_id for item in comparison.metrics),
         "I_incompatible_refusal": incompatible_refused,
         "J_schema_drift_recorded": drift.status == "failed" and drift.lifecycle[-1].state == "blocked" and drift.drift_findings[0].kind == "schema",
+        "K_missing_value_delta": any(item.label == "Missing values · value" and item.absolute_change == -2 for item in quality_comparison.quality),
+        "L_duplicate_delta": any(item.label == "Duplicate rows" and item.absolute_change == -1 for item in quality_comparison.quality),
+        "M_category_drift": category_change.added == ["C"] and category_change.removed == ["B"],
+        "N_step_observability": quality_second.step_summaries[0].tool_name == "dataset.inspect" and quality_second.step_summaries[0].status == "succeeded",
+        "O_observed_not_anomaly": "anomaly" not in quality_comparison.model_dump_json().casefold(),
     }
 
 

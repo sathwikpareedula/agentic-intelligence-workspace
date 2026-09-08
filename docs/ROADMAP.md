@@ -31,6 +31,7 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add bounded JSON/Parquet/TXT adapters and read-only PostgreSQL plus GET-only REST connectors with SSRF/SQL safety, secret references, provenance, task-scoped tools, and a dedicated evaluation family.
 - [x] Add typed analytical plans, deterministic pandas analytics, validated read-only SQL reuse, numeric facts grounded in the existing verifier, task-scoped tools, a focused UI, and a dedicated analytics evaluation family.
 - [x] Add immutable workflow-run lifecycle/history, input and schema fingerprints, persisted facts/verification/artifacts, bounded APIs and task-scoped tools, and deterministic “What Changed?” comparisons with a controlled two-period evaluation.
+- [x] Add compact run-quality/step snapshots and deterministic schema, volume, missing, duplicate, category, join, and trust drift deltas in the same comparison API and UI.
 - Measure correctness, failure behavior, performance, and cost where applicable.
 
 ### Milestone 2 — Retrieval and knowledge foundation

@@ -76,24 +76,29 @@ type WorkflowRun = {
   completed_at: string;
   error?: string;
   lifecycle: { state: string; occurred_at: string }[];
-  input_snapshots: { input_key: string; identity: string; row_count?: number; fingerprint: string; schema_fingerprint?: string; missing_value_count?: number; duplicate_row_count?: number }[];
+  input_snapshots: { input_key: string; identity: string; row_count?: number; fingerprint: string; schema_fingerprint?: string; missing_value_count?: number; duplicate_row_count?: number; missing_by_column: Record<string, number>; categories: Record<string, { unique_count: number; values: string[]; values_complete: boolean }> }[];
   facts: { fact_id: string; label: string; metric: string; value: number; unit?: string; grouping: Record<string, string | number | boolean | null> }[];
   artifacts: { artifact_id: string; filename?: string; download_url?: string; row_count?: number }[];
   warnings: string[];
   drift_findings: { kind: string; status: string; explanation: string }[];
   verification?: { status: string; fact_count: number; warning_count: number };
+  step_summaries: { step: number; tool_name: string; status: string; summary: string; warning_count: number; artifact_count: number; source_count: number }[];
+  diagnostics: { diagnostic_id: string; kind: string; label: string; value: number; unit: string }[];
 };
 type RunComparison = {
   previous_run_id: string;
   current_run_id: string;
   metrics: { fact_id: string; label: string; metric: string; unit?: string | null; grouping: Record<string, string | number | boolean | null>; status: string; previous?: { value: number } | null; current?: { value: number } | null; absolute_change?: number | null; percent_change?: number | null; percent_change_reason?: string | null }[];
   row_counts: { input_key: string; identity_previous?: string | null; identity_current?: string | null; previous?: number | null; current?: number | null; absolute_change?: number | null; percent_change?: number | null; percent_change_reason?: string | null }[];
-  snapshots: { input_key: string; status: string; explanation: string }[];
+  snapshots: { input_key: string; status: string; explanation: string; added_columns: string[]; removed_columns: string[]; type_changes: Record<string, { previous: string; current: string }> }[];
   warnings: { warning: string; previous_count: number; current_count: number; change: number }[];
   verification_previous?: { status: string };
   verification_current?: { status: string };
   artifact_count_previous: number;
   artifact_count_current: number;
+  quality: { quality_id: string; section: "volume" | "quality" | "category" | "join"; label: string; unit: string; previous?: number | null; current?: number | null; absolute_change?: number | null; percent_change?: number | null; percent_change_reason?: string | null; previous_run_id: string; current_run_id: string }[];
+  categories: { input_key: string; column: string; previous_unique_count: number; current_unique_count: number; added: string[]; removed: string[]; values_complete: boolean; previous_run_id: string; current_run_id: string }[];
+  steps: { step: number; tool_name: string; previous_status?: string | null; current_status?: string | null; warning_change: number; artifact_change: number }[];
   observed_only: true;
 };
 const SHORTFALL_PLAN = {
@@ -635,16 +640,25 @@ export default function WorkspacePage() {
         </li>)}</ol> : <p className="muted">Run the saved workflow to create its first immutable history entry.</p>}</div>
         <div><h3>What changed?</h3>{runComparison ? <div className="changeList">
           <p className="observedLabel">Observed change · deterministic, not causal interpretation</p>
+          <h4>Business metrics</h4>
           {runComparison.metrics.filter((item) => item.status !== "unchanged").map((item) => <article key={item.fact_id}>
             <div><strong>{item.label}</strong><span className={`changeStatus ${item.status}`}>{item.status}</span></div>
             <p>{item.previous ? formatRunValue(item.previous.value, item.unit) : "Unavailable"} → {item.current ? formatRunValue(item.current.value, item.unit) : "Unavailable"}</p>
             <small>{item.absolute_change == null ? item.percent_change_reason : `${formatSigned(item.absolute_change)}${item.percent_change == null ? ` · ${item.percent_change_reason}` : ` · ${formatSigned(item.percent_change)}%`}`}</small>
           </article>)}
           {runComparison.row_counts.map((item) => <article key={item.input_key}><div><strong>Rows · {item.identity_current ?? item.identity_previous}</strong></div><p>{item.previous ?? "Unavailable"} → {item.current ?? "Unavailable"}</p><small>{item.absolute_change == null ? item.percent_change_reason : formatSigned(item.absolute_change)}</small></article>)}
-          {runComparison.snapshots.filter((item) => item.status !== "unchanged").map((item) => <article key={item.input_key}><div><strong>Source / schema</strong><span className={`changeStatus ${item.status}`}>{item.status.replaceAll("_", " ")}</span></div><p>{item.explanation}</p></article>)}
+          <h4>Data quality</h4>
+          {runComparison.quality.filter((item) => item.section !== "join" && item.section !== "category" && item.absolute_change !== 0).map((item) => <article key={item.quality_id}><div><strong>{item.label}</strong><span>{item.absolute_change == null ? "unavailable" : formatSigned(item.absolute_change)}</span></div><p>{item.previous ?? "Unavailable"} → {item.current ?? "Unavailable"}</p></article>)}
+          {runComparison.categories.filter((item) => item.added.length || item.removed.length || item.previous_unique_count !== item.current_unique_count).map((item) => <article key={`${item.input_key}-${item.column}`}><div><strong>Categories · {item.column}</strong><span>{item.previous_unique_count} → {item.current_unique_count}</span></div>{item.values_complete ? <p>{item.added.length ? `Added: ${item.added.join(", ")}. ` : ""}{item.removed.length ? `Removed: ${item.removed.join(", ")}.` : ""}</p> : <p>Category values exceeded the safe snapshot bound; only unique counts are compared.</p>}</article>)}
+          {runComparison.quality.some((item) => item.section === "join" && item.absolute_change !== 0) && <h4>Join quality</h4>}
+          {runComparison.quality.filter((item) => item.section === "join" && item.absolute_change !== 0).map((item) => <article key={item.quality_id}><div><strong>{item.label}</strong><span>{item.absolute_change == null ? "unavailable" : formatSigned(item.absolute_change)}</span></div><p>{item.previous ?? "Unavailable"} → {item.current ?? "Unavailable"}</p></article>)}
+          <h4>Schema and sources</h4>
+          {runComparison.snapshots.map((item) => <article key={item.input_key}><div><strong>Source / schema</strong><span className={`changeStatus ${item.status}`}>{item.status.replaceAll("_", " ")}</span></div><p>{item.explanation}</p>{item.added_columns.length > 0 && <small>Added columns: {item.added_columns.join(", ")}</small>}{item.removed_columns.length > 0 && <small>Removed columns: {item.removed_columns.join(", ")}</small>}{Object.entries(item.type_changes).map(([column, types]) => <small key={column}>{column}: {types.previous} → {types.current}</small>)}</article>)}
+          <h4>Trust and execution</h4>
           {runComparison.warnings.map((item) => <article key={item.warning}><div><strong>Warning</strong><span>{formatSigned(item.change)}</span></div><p>{item.warning}</p></article>)}
           <article><div><strong>Verification</strong></div><p>{runComparison.verification_previous?.status?.replaceAll("_", " ") ?? "not recorded"} → {runComparison.verification_current?.status?.replaceAll("_", " ") ?? "not recorded"}</p></article>
           <article><div><strong>Artifacts</strong></div><p>{runComparison.artifact_count_previous} → {runComparison.artifact_count_current}</p></article>
+          {runComparison.steps.map((item) => <article key={item.step}><div><strong>{item.step}. {item.tool_name}</strong><span>{item.previous_status ?? "unavailable"} → {item.current_status ?? "unavailable"}</span></div><small>Warnings {formatSigned(item.warning_change)} · artifacts {formatSigned(item.artifact_change)}</small></article>)}
         </div> : <p className="muted">Create two completed runs, then compare their saved facts and source snapshots. Undefined percentages remain undefined.</p>}</div>
       </div>
     </section>}

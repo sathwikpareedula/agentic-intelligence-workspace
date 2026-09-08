@@ -66,6 +66,33 @@ class RunInputSnapshot(StrictModel):
     column_types: dict[str, str] = Field(default_factory=dict)
     missing_value_count: int | None = Field(default=None, ge=0)
     duplicate_row_count: int | None = Field(default=None, ge=0)
+    missing_by_column: dict[str, int] = Field(default_factory=dict)
+    categories: dict[str, "RunCategorySnapshot"] = Field(default_factory=dict)
+
+
+class RunCategorySnapshot(StrictModel):
+    unique_count: int = Field(ge=0)
+    values: list[str] = Field(default_factory=list, max_length=100)
+    values_complete: bool
+
+
+class RunDiagnostic(StrictModel):
+    diagnostic_id: str = Field(min_length=1, max_length=500)
+    step: int = Field(ge=1)
+    kind: Literal["join", "quality"]
+    label: str = Field(min_length=1, max_length=500)
+    value: float
+    unit: Literal["count", "percent", "ratio", "value"] = "value"
+
+
+class RunStepSummary(StrictModel):
+    step: int = Field(ge=1)
+    tool_name: str = Field(min_length=1, max_length=100)
+    status: Literal["succeeded", "failed", "blocked"]
+    summary: str = Field(min_length=1, max_length=2_000)
+    warning_count: int = Field(ge=0)
+    artifact_count: int = Field(ge=0)
+    source_count: int = Field(ge=0)
 
 
 class RunFact(StrictModel):
@@ -120,6 +147,8 @@ class WorkflowRun(StrictModel):
     warnings: list[str] = Field(default_factory=list, max_length=1_000)
     drift_findings: list[RunDriftFinding] = Field(default_factory=list)
     verification: RunVerificationSummary | None = None
+    step_summaries: list[RunStepSummary] = Field(default_factory=list)
+    diagnostics: list[RunDiagnostic] = Field(default_factory=list)
 
 
 class WorkflowRunRecord(StrictModel):
@@ -139,6 +168,8 @@ class WorkflowRunRecord(StrictModel):
     warnings: list[str] = Field(default_factory=list, max_length=1_000)
     drift_findings: list[RunDriftFinding] = Field(default_factory=list)
     verification: RunVerificationSummary | None = None
+    step_summaries: list[RunStepSummary] = Field(default_factory=list)
+    diagnostics: list[RunDiagnostic] = Field(default_factory=list)
 
     @classmethod
     def from_run(cls, run: WorkflowRun) -> "WorkflowRunRecord":
@@ -218,6 +249,46 @@ class RunSnapshotChange(StrictModel):
     current_fingerprint: str | None = None
     previous_schema_fingerprint: str | None = None
     current_schema_fingerprint: str | None = None
+    added_columns: list[str] = Field(default_factory=list)
+    removed_columns: list[str] = Field(default_factory=list)
+    type_changes: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+
+class RunQualityChange(StrictModel):
+    quality_id: str
+    section: Literal["volume", "quality", "category", "join"]
+    label: str
+    unit: Literal["count", "percent", "ratio", "value"] = "count"
+    previous: float | None = None
+    current: float | None = None
+    absolute_change: float | None = None
+    percent_change: float | None = None
+    percent_change_reason: str | None = None
+    previous_run_id: UUID
+    current_run_id: UUID
+
+
+class RunCategoryChange(StrictModel):
+    input_key: str
+    column: str
+    previous_unique_count: int = Field(ge=0)
+    current_unique_count: int = Field(ge=0)
+    added: list[str] = Field(default_factory=list, max_length=100)
+    removed: list[str] = Field(default_factory=list, max_length=100)
+    values_complete: bool
+    previous_run_id: UUID
+    current_run_id: UUID
+
+
+class RunStepChange(StrictModel):
+    step: int = Field(ge=1)
+    tool_name: str
+    previous_status: Literal["succeeded", "failed", "blocked"] | None = None
+    current_status: Literal["succeeded", "failed", "blocked"] | None = None
+    warning_change: int
+    artifact_change: int
+    previous_run_id: UUID
+    current_run_id: UUID
 
 
 class RunWarningChange(StrictModel):
@@ -241,4 +312,10 @@ class RunComparison(StrictModel):
     verification_current: RunVerificationSummary | None = None
     artifact_count_previous: int = Field(ge=0)
     artifact_count_current: int = Field(ge=0)
+    quality: list[RunQualityChange] = Field(default_factory=list)
+    categories: list[RunCategoryChange] = Field(default_factory=list)
+    steps: list[RunStepChange] = Field(default_factory=list)
     observed_only: Literal[True] = True
+
+
+RunInputSnapshot.model_rebuild()

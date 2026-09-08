@@ -19,3 +19,4 @@ The current executor is synchronous, so lifecycle events are persisted with the 
 - External-source configuration and secrets remain governed by the existing pinned-source and secret-reference policies.
 - Task-scoped agent tools can list, inspect, or compare runs only through an already bound workflow ID and do not return stored dataset bodies.
 - Comparison reports observations, verification changes, and provenance. Causal interpretation remains outside this deterministic subsystem.
+- Compact quality and step summaries reuse existing deterministic inspections/tool observations. Category labels are stored only for complete bounded sets; incomplete sets expose counts without added/removed claims. These signals are called drift, reserving anomaly for a future explicit statistical method.
