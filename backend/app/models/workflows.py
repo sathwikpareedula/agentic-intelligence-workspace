@@ -5,8 +5,11 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic import model_validator
 
 from app.agent.models import ToolObservation
+
+MAX_WORKFLOW_RECIPE_BYTES = 64 * 1024 * 1024
 
 
 class StrictModel(BaseModel):
@@ -24,6 +27,14 @@ class WorkflowCreate(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     steps: list[WorkflowStep] = Field(min_length=1, max_length=50)
     source_task_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def bound_recipe_size(self) -> "WorkflowCreate":
+        if len(self.model_dump_json().encode("utf-8")) > MAX_WORKFLOW_RECIPE_BYTES:
+            raise ValueError(
+                f"Workflow recipe exceeds the {MAX_WORKFLOW_RECIPE_BYTES // (1024 * 1024)} MiB persistence limit."
+            )
+        return self
 
 
 class Workflow(WorkflowCreate):

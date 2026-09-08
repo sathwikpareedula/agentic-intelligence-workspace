@@ -67,9 +67,10 @@ cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.north_star ..\evals\north_star_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.template_transform ..\evals\template_transform_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.sources ..\evals\source_cases.json
+.\.venv\Scripts\python.exe -m app.evaluation.analytics ..\evals\analytics_cases.json
 ```
 
-All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database.
+All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. Source and analytics evaluations exercise the bounded connector and typed-computation contracts. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database unless the source evaluator receives an explicit isolated `TEST_DATABASE_URL`.
 
 The Transform-to-Template evaluation covers all 18 controlled cases from exact and normalized mappings through ambiguity, missing fields, type refusal, safe/unsafe joins, derivations, exact schema order, workbook reopen/preservation, formula-injection protection, policy grounding/refusal, workflow reruns, source/template drift, and confirmed-mapping reuse.
 

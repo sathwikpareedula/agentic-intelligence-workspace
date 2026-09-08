@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+import json
+from math import isfinite
 from typing import Any
 
 import pandas as pd
-from pandas.api.types import is_bool_dtype, is_numeric_dtype
+from pandas.api.types import is_bool_dtype, is_integer_dtype, is_numeric_dtype
 
 from app.models.analytics import (
     AnalyticsFilter,
@@ -20,6 +23,7 @@ from app.services.datasets import LoadedDataset, inspect_dataset, load_dataset
 from app.services.postgres_source import import_source, validate_select
 
 MAX_RESULT_CELLS = 50_000
+MAX_SAFE_INTEGER = 2**53
 
 
 class AnalyticsError(Exception):
@@ -28,6 +32,7 @@ class AnalyticsError(Exception):
 
 def validate_plan(plan: AnalyticsPlan, columns: list[str] | None = None) -> AnalyticsPlan:
     AnalyticsPlan.model_validate(plan.model_dump())
+    _validate_metric_outputs(plan)
     if columns is not None:
         _require_plan_columns(plan, columns)
     return plan
@@ -35,9 +40,13 @@ def validate_plan(plan: AnalyticsPlan, columns: list[str] | None = None) -> Anal
 
 def execute_dataset_analytics(dataset: LoadedDataset, plan: AnalyticsPlan) -> AnalyticsResult:
     columns = [str(column) for column in dataset.frame.columns]
+    duplicates = sorted({name for name in columns if columns.count(name) > 1})
+    if duplicates:
+        raise AnalyticsError(f"Analytics requires unique column names; duplicates: {', '.join(duplicates)}.")
     if plan.expected_columns and columns != plan.expected_columns:
         raise AnalyticsError("Dataset schema does not match the analytical plan; rerun after inspecting the current columns.")
     _require_plan_columns(plan, columns)
+    _validate_metric_outputs(plan)
     frame = _apply_filters(dataset.frame.copy(), plan.filters)
     if frame.empty:
         raise AnalyticsError("No rows remain after applying the requested filters.")
@@ -51,7 +60,13 @@ def execute_dataset_analytics(dataset: LoadedDataset, plan: AnalyticsPlan) -> An
     if plan.limit:
         result_frame = result_frame.head(plan.limit)
     rows = _json_rows(result_frame)
-    verification = {item.key: item.value for item in facts if item.value is not None}
+    verification: dict[str, float] = {}
+    for item in facts:
+        if item.value is None:
+            continue
+        if item.key in verification:
+            raise AnalyticsError(f"Analytical facts produced a duplicate identity '{item.key}'.")
+        verification[item.key] = _finite_result(item.value, item.key)
     return AnalyticsResult(
         status="completed",
         plan=plan,
@@ -124,7 +139,7 @@ def _analyze(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str):
     warnings: list[str] = []
     if plan.analysis == "metrics":
         table = _grouped_metrics(frame, plan)
-        facts = _facts_from_metric_table(table, plan, dataset_name, len(frame))
+        facts = _facts_from_metric_table(table, plan, dataset_name, frame)
         return table, facts, warnings, "Computed deterministic grouped or overall metrics."
     if plan.analysis == "distribution":
         return _distribution(frame, plan, dataset_name)
@@ -137,11 +152,21 @@ def _analyze(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str):
     if plan.analysis in {"percent_change", "growth_rate"}:
         return _change(frame, plan, dataset_name)
     if plan.analysis == "group_compare":
+        comparison_plan = plan.model_copy(
+            update={
+                "metrics": [
+                    MetricSpec(name="count"),
+                    MetricSpec(name="mean", column=plan.value_column),
+                    MetricSpec(name="sum", column=plan.value_column),
+                ]
+            }
+        )
+        _validate_metric_outputs(comparison_plan)
         table = _grouped_metrics(
             frame,
-            plan.model_copy(update={"metrics": [MetricSpec(name="count"), MetricSpec(name="mean", column=plan.value_column), MetricSpec(name="sum", column=plan.value_column)]}),
+            comparison_plan,
         )
-        facts = _facts_from_metric_table(table, plan, dataset_name, len(frame))
+        facts = _facts_from_metric_table(table, comparison_plan, dataset_name, frame)
         return table, facts, warnings, "Compared groups using deterministic count, mean, and sum."
     if plan.analysis == "target_variance":
         return _target_variance(frame, plan, dataset_name)
@@ -168,9 +193,13 @@ def _grouped_metrics(frame: pd.DataFrame, plan: AnalyticsPlan) -> pd.DataFrame:
 def _metric_value(frame: pd.DataFrame, spec: MetricSpec) -> float:
     if spec.name == "count":
         return float(len(frame))
-    series = _numeric_series(frame, spec.column or "")
     if spec.name == "distinct_count":
+        assert spec.column is not None
+        series = frame[spec.column]
+        if _is_numeric_series(series):
+            series = _numeric_series(frame, spec.column)
         return float(series.nunique(dropna=True))
+    series = _numeric_series(frame, spec.column or "")
     if spec.name == "sum":
         return float(series.sum(min_count=1)) if not series.empty else _empty_numeric()
     if spec.name == "mean":
@@ -250,6 +279,8 @@ def _rank(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str):
     working = frame.copy()
     method = {"dense": "dense", "min": "min", "max": "max"}[plan.rank_method]
     working["_rank_value"] = _numeric_series(working, plan.value_column or "", dropna=False)
+    if working["_rank_value"].dropna().empty:
+        raise AnalyticsError("Rank requires at least one non-null numeric value.")
     working["rank"] = working["_rank_value"].rank(method=method, ascending=plan.ascending)
     working = working.drop(columns=["_rank_value"]).sort_values("rank", kind="mergesort")
     top = working.iloc[0]
@@ -276,20 +307,35 @@ def _rolling_mean(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str):
         table = pd.concat(values, ignore_index=True)
     else:
         table = _rolling_on_group(working, plan)
-    last = table.dropna(subset=["rolling_mean"]).iloc[-1] if table["rolling_mean"].notna().any() else None
     facts = []
-    if last is not None:
+    if plan.group_by:
+        grouped_results = table.groupby(plan.group_by, dropna=False, sort=False)
+    else:
+        grouped_results = [((), table)]
+    for keys, group in grouped_results:
+        last = group.dropna(subset=["rolling_mean"]).iloc[-1] if group["rolling_mean"].notna().any() else None
+        if last is None:
+            continue
+        key_values = keys if isinstance(keys, tuple) else (keys,)
+        grouping = {
+            column: _scalar(value)
+            for column, value in zip(plan.group_by, key_values, strict=True)
+        }
+        suffix = _group_suffix(grouping)
         facts.append(
             NumericFact(
-                key="rolling.mean.last",
+                key=f"rolling.mean.last{suffix}",
                 metric="rolling_mean",
                 value=float(last["rolling_mean"]),
                 label="latest rolling mean",
                 dataset=dataset_name,
                 calculation=f"rolling_mean({plan.value_column}, window={plan.window})",
-                row_count=len(table),
+                row_count=int(group["rolling_mean"].notna().sum()),
+                grouping=grouping,
             )
         )
+    if not facts:
+        raise AnalyticsError("Rolling mean did not produce a complete window for any group.")
     return table, facts, [], f"Computed a {plan.window}-row rolling mean of {plan.value_column}."
 
 
@@ -312,7 +358,10 @@ def _change(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str):
     working["percent_change"] = change * 100.0
     working["growth_rate"] = change
     column = "percent_change" if plan.analysis == "percent_change" else "growth_rate"
-    last = working.dropna(subset=[column]).iloc[-1]
+    completed = working.dropna(subset=[column])
+    if completed.empty:
+        raise AnalyticsError("Percent change requires at least two consecutive non-null ordered values.")
+    last = completed.iloc[-1]
     facts = [
         NumericFact(
             key=f"{plan.analysis}.last",
@@ -322,6 +371,7 @@ def _change(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str):
             dataset=dataset_name,
             calculation=f"{plan.analysis}({plan.value_column}) ordered by {plan.order_column}",
             row_count=int(working[column].notna().sum()),
+            unit="percent" if plan.analysis == "percent_change" else "ratio",
         )
     ]
     return working, facts, [], f"Computed {plan.analysis.replace('_', ' ')} for {plan.value_column}."
@@ -334,7 +384,7 @@ def _target_variance(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str
     rows = []
     for keys, group in grouped:
         key_values = keys if isinstance(keys, tuple) else (keys,)
-        grouping = {column: str(_scalar(value)) for column, value in zip(plan.group_by, key_values, strict=True)}
+        grouping = {column: _scalar(value) for column, value in zip(plan.group_by, key_values, strict=True)}
         actual = _metric_value(group, MetricSpec(name="sum", column=plan.value_column))
         targets = group[plan.second_column]
         unique_targets = pd.Series(targets.dropna().unique())
@@ -344,13 +394,13 @@ def _target_variance(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str
             raise AnalyticsError("Target values are not unique within a group.")
         if not _is_numeric_series(unique_targets):
             raise AnalyticsError("Target values must be numeric.")
-        target = float(unique_targets.iloc[0])
+        target = _finite_result(float(unique_targets.iloc[0]), "target")
         variance = actual - target
         shortfall = max(target - actual, 0.0)
         rows.append({**grouping, "actual": actual, "target": target, "variance": variance, "shortfall": shortfall, "row_count": float(len(group))})
     table = pd.DataFrame(rows).sort_values("shortfall", ascending=False, kind="mergesort").reset_index(drop=True)
     worst = table.iloc[0]
-    grouping = {column: str(worst[column]) for column in plan.group_by}
+    grouping = {column: _scalar(worst[column]) for column in plan.group_by}
     facts = [
         NumericFact(
             key="target.worst_region_shortfall",
@@ -386,7 +436,8 @@ def _target_variance(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str
     if plan.contributor_column:
         mask = pd.Series(True, index=frame.index)
         for column in plan.group_by:
-            mask &= frame[column].astype(str) == grouping[column]
+            value = grouping[column]
+            mask &= frame[column].isna() if value is None else frame[column] == value
         contributors = (
             frame.loc[mask]
             .groupby(plan.contributor_column, dropna=False, sort=False)[plan.value_column]
@@ -425,30 +476,31 @@ def _apply_filters(frame: pd.DataFrame, filters: list[AnalyticsFilter]) -> pd.Da
         if item.column not in working.columns:
             raise AnalyticsError(f"Filter column '{item.column}' is not in the dataset.")
         series = working[item.column]
-        if item.operator == "eq":
-            working = working[series == item.value]
-        elif item.operator == "ne":
-            working = working[series != item.value]
-        elif item.operator == "gt":
-            working = working[series > item.value]
-        elif item.operator == "gte":
-            working = working[series >= item.value]
-        elif item.operator == "lt":
-            working = working[series < item.value]
-        elif item.operator == "lte":
-            working = working[series <= item.value]
-        elif item.operator == "in":
-            if not isinstance(item.value, list):
-                raise AnalyticsError("Operator 'in' requires a list value.")
-            working = working[series.isin(item.value)]
-        elif item.operator == "not_in":
-            if not isinstance(item.value, list):
-                raise AnalyticsError("Operator 'not_in' requires a list value.")
-            working = working[~series.isin(item.value)]
-        elif item.operator == "is_null":
-            working = working[series.isna()]
-        else:
-            working = working[series.notna()]
+        try:
+            if item.operator == "eq":
+                working = working[series == item.value]
+            elif item.operator == "ne":
+                working = working[series != item.value]
+            elif item.operator == "gt":
+                working = working[series > item.value]
+            elif item.operator == "gte":
+                working = working[series >= item.value]
+            elif item.operator == "lt":
+                working = working[series < item.value]
+            elif item.operator == "lte":
+                working = working[series <= item.value]
+            elif item.operator == "in":
+                working = working[series.isin(item.value)]
+            elif item.operator == "not_in":
+                working = working[~series.isin(item.value)]
+            elif item.operator == "is_null":
+                working = working[series.isna()]
+            else:
+                working = working[series.notna()]
+        except (TypeError, ValueError) as exc:
+            raise AnalyticsError(
+                f"Filter '{item.operator}' is incompatible with column '{item.column}'."
+            ) from exc
     return working
 
 
@@ -480,6 +532,13 @@ def _numeric_series(frame: pd.DataFrame, column: str, dropna: bool = True) -> pd
     if not _is_numeric_series(series):
         raise AnalyticsError(f"Column '{column}' is not numeric; refusing unsafe coercion.")
     values = pd.to_numeric(series, errors="raise")
+    non_null = values.dropna()
+    if any(not isfinite(float(value)) for value in non_null):
+        raise AnalyticsError(f"Column '{column}' contains NaN or infinity; finite numeric values are required.")
+    if is_integer_dtype(values.dtype) and any(abs(int(value)) > MAX_SAFE_INTEGER for value in non_null):
+        raise AnalyticsError(
+            f"Column '{column}' contains integers beyond the exact analytical fact range ({MAX_SAFE_INTEGER})."
+        )
     return values.dropna() if dropna else values
 
 
@@ -491,7 +550,9 @@ def _ordered(frame: pd.DataFrame, column: str) -> pd.DataFrame:
     if column not in frame.columns:
         raise AnalyticsError(f"Order column '{column}' is not in the dataset.")
     working = frame.copy()
-    if not _is_numeric_series(working[column]):
+    if _is_numeric_series(working[column]):
+        _numeric_series(working, column, dropna=False)
+    else:
         parsed = pd.to_datetime(working[column], errors="coerce", utc=True)
         if parsed.isna().any() and working[column].notna().any():
             raise AnalyticsError(f"Order column '{column}' could not be parsed as dates or numbers.")
@@ -499,11 +560,17 @@ def _ordered(frame: pd.DataFrame, column: str) -> pd.DataFrame:
     return working.sort_values(column, kind="mergesort")
 
 
-def _facts_from_metric_table(table: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str, row_count: int) -> list[NumericFact]:
+def _facts_from_metric_table(
+    table: pd.DataFrame,
+    plan: AnalyticsPlan,
+    dataset_name: str,
+    source_frame: pd.DataFrame,
+) -> list[NumericFact]:
     facts = []
     for _, record in table.iterrows():
-        grouping = {column: str(record[column]) for column in plan.group_by if column in table.columns}
-        suffix = "." + "_".join(grouping.values()) if grouping else ""
+        grouping = {column: _scalar(record[column]) for column in plan.group_by if column in table.columns}
+        suffix = _group_suffix(grouping)
+        row_count = _group_row_count(source_frame, grouping)
         for spec in plan.metrics:
             alias = spec.alias or _metric_alias(spec)
             facts.append(
@@ -525,7 +592,8 @@ def _metric_alias(spec: MetricSpec) -> str:
     if spec.name == "count":
         return "count"
     if spec.name == "percentile":
-        return f"p{int(spec.percentile or 0)}_{spec.column}"
+        percentile = format(spec.percentile or 0, ".15g").replace(".", "_")
+        return f"p{percentile}_{spec.column}"
     return f"{spec.name}_{spec.column}"
 
 
@@ -544,6 +612,8 @@ def _scalar(value: Any):
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and not isfinite(value):
+            raise AnalyticsError("Analytical results must be finite numbers.")
         return float(value) if isinstance(value, float) else int(value)
     return str(value)
 
@@ -551,7 +621,41 @@ def _scalar(value: Any):
 def _optional_float(value: Any) -> float | None:
     if value is None or pd.isna(value):
         return None
-    return float(value)
+    return _finite_result(float(value), "numeric fact")
+
+
+def _finite_result(value: float, label: str) -> float:
+    if not isfinite(value):
+        raise AnalyticsError(f"Analytical result '{label}' is not finite.")
+    return value
+
+
+def _group_suffix(grouping: dict[str, Any]) -> str:
+    if not grouping:
+        return ""
+    payload = json.dumps(grouping, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f".group.{sha256(payload.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _group_row_count(frame: pd.DataFrame, grouping: dict[str, Any]) -> int:
+    if not grouping:
+        return len(frame)
+    mask = pd.Series(True, index=frame.index)
+    for column, value in grouping.items():
+        mask &= frame[column].isna() if value is None else frame[column] == value
+    return int(mask.sum())
+
+
+def _validate_metric_outputs(plan: AnalyticsPlan) -> None:
+    if not plan.metrics:
+        return
+    aliases = [spec.alias or _metric_alias(spec) for spec in plan.metrics]
+    duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
+    overlaps = sorted(set(aliases).intersection(plan.group_by))
+    if duplicates:
+        raise AnalyticsError(f"Metric output names must be unique; duplicates: {', '.join(duplicates)}.")
+    if overlaps:
+        raise AnalyticsError(f"Metric output names overlap grouping columns: {', '.join(overlaps)}.")
 
 
 def _require_values(series: pd.Series, minimum: int, label: str) -> None:

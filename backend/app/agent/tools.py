@@ -77,7 +77,7 @@ class ToolRegistry:
 
 class DatasetInput(ToolInput):
     filename: str = Field(min_length=1, max_length=255)
-    content_base64: str = Field(min_length=1)
+    content_base64: str = Field(min_length=1, max_length=14_000_000)
     sheet: str | None = None
 
     def content(self) -> bytes:

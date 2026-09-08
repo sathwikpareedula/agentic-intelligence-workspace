@@ -9,6 +9,7 @@ import pandas as pd
 
 MAX_JSON_ROWS = 100_000
 MAX_JSON_COLUMNS = 200
+MAX_JSON_BYTES = 10 * 1024 * 1024
 
 
 class JsonAdapterError(Exception):
@@ -16,6 +17,8 @@ class JsonAdapterError(Exception):
 
 
 def frame_from_json(content: bytes, records_key: str | None = None) -> pd.DataFrame:
+    if len(content) > MAX_JSON_BYTES:
+        raise JsonAdapterError(f"JSON datasets may be at most {MAX_JSON_BYTES // (1024 * 1024)} MiB.")
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -23,8 +26,10 @@ def frame_from_json(content: bytes, records_key: str | None = None) -> pd.DataFr
     if "\x00" in text:
         raise JsonAdapterError("JSON datasets containing null bytes are not accepted.")
     try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
+        payload = json.loads(text, parse_constant=_reject_non_finite_constant)
+    except JsonAdapterError:
+        raise
+    except (json.JSONDecodeError, RecursionError) as exc:
         raise JsonAdapterError("The uploaded JSON is malformed.") from exc
     records = _select_records(payload, records_key)
     if len(records) > MAX_JSON_ROWS:
@@ -113,3 +118,7 @@ def _scalar_or_reject(value: Any, index: int, field: str) -> Any:
 
 def _is_scalar(value: Any) -> bool:
     return isinstance(value, (str, int, float, bool)) or value is None
+
+
+def _reject_non_finite_constant(value: str) -> None:
+    raise JsonAdapterError(f"JSON numeric constant '{value}' is not finite and is not accepted.")

@@ -19,6 +19,8 @@ The existing pandas stack already computes the bounded metric set. Adding DuckDB
 - Plans forbid unknown fields and do not accept Python expressions.
 - Numeric work is pandas-only: no `eval`, `exec`, or generated code.
 - Important answer claims reuse `EvidenceVerifier` against named `verification_facts`.
+- Non-finite inputs and integers outside exact IEEE-754 fact range fail closed; sample variance and standard deviation use `ddof=1`; percent-change facts use percent units while growth-rate facts use ratios.
+- Grouped fact identities encode typed grouping context, duplicate identities across tool calls are ambiguous rather than silently overwriting stale facts, and unit-bearing claims must preserve the deterministic unit.
 - External SQL is still one WITH/SELECT, with application validation plus `READ ONLY` sessions.
 
 ## When to Revisit

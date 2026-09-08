@@ -56,13 +56,17 @@ class WorkflowService:
 
     def create(self, request: WorkflowCreate) -> Workflow:
         for index, step in enumerate(request.steps, 1):
+            if _contains_raw_secret(step.arguments):
+                raise WorkflowError(
+                    f"Step {index} contains a raw secret field; persist only approved secret reference names."
+                )
             tool = self._registry.get(step.tool)
             if tool is None:
                 raise WorkflowError(f"Step {index} references unknown tool '{step.tool}'.")
             try:
                 tool.input_model.model_validate(step.arguments)
             except ValidationError as exc:
-                raise WorkflowError(f"Step {index} arguments are invalid: {exc}") from exc
+                raise WorkflowError(f"Step {index} arguments are invalid: {_validation_summary(exc)}") from exc
         workflow = Workflow(**request.model_dump())
         self._repository.save(workflow)
         return workflow
@@ -79,12 +83,19 @@ class WorkflowService:
         invalid_steps = sorted(index for index in overrides if index > len(workflow.steps))
         if invalid_steps:
             raise WorkflowError(f"Overrides reference nonexistent step(s): {invalid_steps}.")
+        if _contains_raw_secret(overrides):
+            first_step = min(overrides, default=1)
+            return self._save_run(
+                _failed(workflow, [], first_step, "Workflow overrides cannot include secrets.", started_at),
+                {},
+            )
         observations = []
         for index, step in enumerate(workflow.steps, 1):
             tool = self._registry.get(step.tool)
             if tool is None:
                 return self._save_run(_failed(workflow, observations, index, f"Tool '{step.tool}' is unavailable.", started_at), overrides)
-            arguments = {**step.arguments, **overrides.get(index, {})}
+            step_override = overrides.get(index, {})
+            arguments = {**step.arguments, **step_override}
             if step.tool == "sales.august_report" and "policy_evidence" in overrides.get(index, {}):
                 return self._save_run(_failed(workflow, observations, index,
                     "Saved commission evidence is pinned. Start a new sales task to retrieve a replacement policy.", started_at), overrides)
@@ -93,14 +104,9 @@ class WorkflowService:
                 if unsupported:
                     return self._save_run(_failed(workflow, observations, index,
                         f"Saved mappings, rules, and policy evidence are pinned; unsupported overrides: {unsupported}.", started_at), overrides)
-            if any(key.casefold() in {"password", "token", "authorization", "cookie", "api_key", "apikey"} or "secret" in key.casefold() and not key.endswith("_secret_ref") for key in overrides.get(index, {})):
+            if step_override and (step.tool.startswith("source.") or step.tool == "analytics.sql"):
                 return self._save_run(_failed(workflow, observations, index,
-                    "Workflow overrides cannot include secrets.", started_at), overrides)
-            if step.tool.startswith("source.") and any(
-                key in {"password", "headers"} for key in overrides.get(index, {})
-            ):
-                return self._save_run(_failed(workflow, observations, index,
-                    "External-source credentials are not overridable; use the configured secret reference.", started_at), overrides)
+                    "External-source workflow configuration is pinned and cannot be overridden.", started_at), {})
             try:
                 validated = tool.input_model.model_validate(arguments)
                 if step.expected_columns is not None:
@@ -109,7 +115,8 @@ class WorkflowService:
                     _check_nested_schemas(validated, step.expected_schemas)
                 observation = tool.handler(validated)
             except Exception as exc:
-                return self._save_run(_failed(workflow, observations, index, str(exc), started_at), overrides)
+                message = _validation_summary(exc) if isinstance(exc, ValidationError) else str(exc)
+                return self._save_run(_failed(workflow, observations, index, message, started_at), overrides)
             observations.append(observation)
             if not observation.success:
                 return self._save_run(_failed(workflow, observations, index, observation.summary, started_at), overrides)
@@ -144,6 +151,31 @@ def _check_schema(arguments, expected_columns: list[str]) -> None:
     actual = inspect_dataset(dataset).columns
     if actual != expected_columns:
         raise WorkflowError(f"Schema drift detected: expected columns {expected_columns}, received {actual}.")
+
+
+def _contains_raw_secret(value, *, reference_container: bool = False) -> bool:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = str(key).strip().casefold().replace("-", "_")
+            is_reference = normalized.endswith("_secret_ref") or normalized.endswith("_secret_refs")
+            if not reference_container and not is_reference and any(
+                marker in normalized
+                for marker in ("api_key", "apikey", "authorization", "credential", "password", "secret", "token")
+            ):
+                return True
+            if not is_reference and _contains_raw_secret(child):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_contains_raw_secret(item, reference_container=reference_container) for item in value)
+    return False
+
+
+def _validation_summary(exc: ValidationError) -> str:
+    return "; ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or 'arguments'}: {error['msg']}"
+        for error in exc.errors(include_context=False, include_input=False)
+    )
 
 
 def _check_nested_schemas(arguments, expected_schemas: dict[str, list[str]]) -> None:

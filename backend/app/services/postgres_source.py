@@ -34,9 +34,12 @@ FORBIDDEN_SQL = re.compile(
     r"DUMPFILE|PROGRAM|SET|COMMENT|REASSIGN|OWNER|RULE|TRIGGER|POLICY|PUBLICATION|SUBSCRIPTION|"
     r"CHECKPOINT|COMMIT|ROLLBACK|SAVEPOINT|BEGIN|START|pg_read_file|pg_write_file|"
     r"pg_read_binary_file|pg_ls_dir|pg_stat_file|pg_terminate_backend|pg_cancel_backend|"
-    r"pg_reload_conf|set_config|dblink|lo_import|lo_export|lo_unlink)\b",
+    r"pg_reload_conf|pg_sleep|pg_advisory_[A-Za-z0-9_]*|pg_export_snapshot|"
+    r"pg_log_backend_memory_contexts|pg_promote|pg_rotate_logfile|pg_backup_start|pg_backup_stop|"
+    r"pg_switch_wal|pg_create_restore_point|current_setting|set_config|dblink|lo_[A-Za-z0-9_]*)\b",
     re.IGNORECASE,
 )
+SYSTEM_OBJECT_SQL = re.compile(r"(?:pg_catalog|information_schema|pg_toast)", re.IGNORECASE)
 LOCKING_SELECT = re.compile(
     r"\bFOR\s+(NO\s+KEY\s+)?(UPDATE|SHARE|KEY\s+SHARE)\b",
     re.IGNORECASE,
@@ -51,8 +54,13 @@ class PostgresSourceError(Exception):
 
 def test_connection(config: PostgresSourceConfig) -> dict[str, str | int | bool]:
     with _connect(config) as connection:
-        row = connection.execute("SELECT current_database() AS database, pg_is_in_recovery() AS replica").fetchone()
+        row = connection.execute(
+            "SELECT current_database() AS database, pg_is_in_recovery() AS replica, "
+            "current_setting('transaction_read_only') AS transaction_read_only"
+        ).fetchone()
         assert row is not None
+        if row[2] != "on":
+            raise PostgresSourceError("The external PostgreSQL connection did not enter a read-only transaction.")
         return {
             "status": "ok",
             "database": str(row[0]),
@@ -101,6 +109,7 @@ def list_catalog(config: PostgresSourceConfig) -> PostgresCatalog:
 
 
 def inspect_table(config: PostgresSourceConfig, table: PostgresTableRef) -> PostgresTableMetadata:
+    _require_user_schema(table.schema_name)
     with _connect(config) as connection:
         row = connection.execute(
             """
@@ -124,6 +133,8 @@ def import_source(request: PostgresImportRequest) -> ImportedDataset:
     if (request.table is None) == (request.select_sql is None):
         raise PostgresSourceError("Provide either a table reference or a single bounded SELECT statement.")
     max_rows = min(request.max_rows or DEFAULT_MAX_ROWS, MAX_DATASET_ROWS)
+    if request.table is not None:
+        _require_user_schema(request.table.schema_name)
     query, fingerprint_sql = _query_for_request(request, max_rows)
     with _connect(request.source) as connection:
         try:
@@ -186,21 +197,112 @@ def _query_for_request(request: PostgresImportRequest, max_rows: int) -> tuple[s
 
 
 def validate_select(statement: str) -> str:
-    cleaned = _strip_sql_comments(statement).strip().rstrip(";").strip()
+    cleaned, code = _lex_sql(statement)
     if not cleaned:
         raise PostgresSourceError("The SELECT statement is empty.")
-    if ";" in cleaned:
-        raise PostgresSourceError("Multiple SQL statements are not allowed.")
-    if FORBIDDEN_SQL.search(cleaned) or LOCKING_SELECT.search(cleaned):
+    if FORBIDDEN_SQL.search(code) or LOCKING_SELECT.search(code) or SYSTEM_OBJECT_SQL.search(code):
         raise PostgresSourceError("The statement is not a permitted read-only SELECT.")
-    if not re.match(r"^(WITH|SELECT)\b", cleaned, re.IGNORECASE):
+    if re.search(r"\bWITH\s+RECURSIVE\b", code, re.IGNORECASE):
+        raise PostgresSourceError("Recursive CTEs are not allowed in bounded external reads.")
+    if not re.match(r"^(WITH|SELECT)\b", code.strip(), re.IGNORECASE):
         raise PostgresSourceError("Only a single WITH/SELECT statement is allowed.")
     return cleaned
 
 
-def _strip_sql_comments(statement: str) -> str:
-    without_block = re.sub(r"/\*.*?\*/", " ", statement, flags=re.DOTALL)
-    return re.sub(r"--[^\n]*", " ", without_block)
+def _lex_sql(statement: str) -> tuple[str, str]:
+    """Remove comments and mask literals while enforcing one SQL statement.
+
+    This is deliberately a lexical defense-in-depth check, not a PostgreSQL
+    semantic parser. The read-only transaction and least-privilege source role
+    remain the final database safety boundary.
+    """
+
+    cleaned: list[str] = []
+    code: list[str] = []
+    semicolons: list[int] = []
+    index = 0
+    length = len(statement)
+    while index < length:
+        char = statement[index]
+        following = statement[index + 1] if index + 1 < length else ""
+        if char == "-" and following == "-":
+            index += 2
+            while index < length and statement[index] not in "\r\n":
+                index += 1
+            cleaned.append(" ")
+            code.append(" ")
+            continue
+        if char == "/" and following == "*":
+            depth = 1
+            index += 2
+            while index < length and depth:
+                pair = statement[index : index + 2]
+                if pair == "/*":
+                    depth += 1
+                    index += 2
+                elif pair == "*/":
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            if depth:
+                raise PostgresSourceError("The SELECT statement contains an unterminated block comment.")
+            cleaned.append(" ")
+            code.append(" ")
+            continue
+        if char == "'":
+            start = index
+            index += 1
+            while index < length:
+                if statement[index] == "'":
+                    if index + 1 < length and statement[index + 1] == "'":
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            else:
+                raise PostgresSourceError("The SELECT statement contains an unterminated string literal.")
+            literal = statement[start:index]
+            cleaned.append(literal)
+            code.append(" " * len(literal))
+            continue
+        if char == "$":
+            match = re.match(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$", statement[index:])
+            if match:
+                delimiter = match.group(0)
+                end = statement.find(delimiter, index + len(delimiter))
+                if end < 0:
+                    raise PostgresSourceError("The SELECT statement contains an unterminated dollar-quoted literal.")
+                end += len(delimiter)
+                literal = statement[index:end]
+                cleaned.append(literal)
+                code.append(" " * len(literal))
+                index = end
+                continue
+        if char == ";":
+            semicolons.append(sum(len(part) for part in cleaned))
+        cleaned.append(char)
+        code.append(char)
+        index += 1
+
+    cleaned_sql = "".join(cleaned).strip()
+    code_sql = "".join(code).strip()
+    if semicolons:
+        without_trailing = cleaned_sql.rstrip()
+        if len(semicolons) != 1 or not without_trailing.endswith(";"):
+            raise PostgresSourceError("Multiple SQL statements are not allowed.")
+        cleaned_sql = without_trailing[:-1].rstrip()
+        code_sql = code_sql.rstrip()
+        if code_sql.endswith(";"):
+            code_sql = code_sql[:-1].rstrip()
+    return cleaned_sql, code_sql
+
+
+def _require_user_schema(schema_name: str) -> None:
+    lowered = schema_name.casefold()
+    if lowered in SYSTEM_SCHEMAS or lowered.startswith("pg_"):
+        raise PostgresSourceError("System PostgreSQL schemas are not available through table imports.")
 
 
 def _columns(connection, schema_name: str, table: str) -> list[PostgresColumnMetadata]:
@@ -262,7 +364,7 @@ def _connect(config: PostgresSourceConfig):
     try:
         connection.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
         connection.execute("SET default_transaction_read_only = on")
-        connection.execute("SET statement_timeout = %s", (STATEMENT_TIMEOUT_MS,))
+        connection.execute("SELECT set_config('statement_timeout', %s, false)", (str(STATEMENT_TIMEOUT_MS),))
         connection.execute("BEGIN READ ONLY")
     except psycopg.Error as exc:
         connection.close()

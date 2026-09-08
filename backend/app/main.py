@@ -56,7 +56,18 @@ async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return _error_response(request, 422, "validation_error", jsonable_encoder(exc.errors()))
+    safe_errors = []
+    for error in exc.errors():
+        safe_error = dict(error)
+        safe_error.pop("input", None)
+        safe_error.pop("ctx", None)
+        safe_errors.append(safe_error)
+    return _error_response(
+        request,
+        422,
+        "validation_error",
+        jsonable_encoder(safe_errors),
+    )
 
 
 @app.exception_handler(Exception)

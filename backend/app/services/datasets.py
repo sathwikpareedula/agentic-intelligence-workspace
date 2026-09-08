@@ -22,6 +22,8 @@ from app.services.json_adapter import JsonAdapterError, frame_from_json
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_DATASET_ROWS = 100_000
+MAX_DATASET_COLUMNS = 200
+MAX_PARQUET_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 SUPPORTED_EXTENSIONS = {".csv": "csv", ".xlsx": "xlsx", ".json": "json", ".parquet": "parquet", ".pq": "parquet"}
 TOP_VALUES_LIMIT = 5
 
@@ -210,9 +212,27 @@ def _read_parquet(content: bytes) -> pd.DataFrame:
         raise DatasetReadError("Could not read PARQUET dataset: the file is malformed or unsupported.") from exc
     if parquet_file.metadata is not None and parquet_file.metadata.num_rows > MAX_DATASET_ROWS:
         raise DatasetTooLargeError(f"Datasets may contain at most {MAX_DATASET_ROWS} rows.")
+    if parquet_file.metadata is not None and parquet_file.metadata.num_columns > MAX_DATASET_COLUMNS:
+        raise DatasetTooLargeError(f"Datasets may contain at most {MAX_DATASET_COLUMNS} columns.")
+    arrow_schema = parquet_file.schema_arrow
+    if len(arrow_schema.names) != len(set(arrow_schema.names)):
+        raise DatasetReadError("Parquet datasets must have unique column names.")
+    if any(pa.types.is_nested(field.type) for field in arrow_schema):
+        raise DatasetReadError("Nested Parquet column types are not supported by the bounded table adapter.")
+    if parquet_file.metadata is not None:
+        uncompressed_bytes = sum(
+            parquet_file.metadata.row_group(index).total_byte_size
+            for index in range(parquet_file.metadata.num_row_groups)
+        )
+        if uncompressed_bytes > MAX_PARQUET_UNCOMPRESSED_BYTES:
+            raise DatasetTooLargeError(
+                f"Parquet data expands beyond the {MAX_PARQUET_UNCOMPRESSED_BYTES // (1024 * 1024)} MiB processing limit."
+            )
     table = parquet_file.read()
     if table.num_rows > MAX_DATASET_ROWS:
         raise DatasetTooLargeError(f"Datasets may contain at most {MAX_DATASET_ROWS} rows.")
+    if table.num_columns > MAX_DATASET_COLUMNS:
+        raise DatasetTooLargeError(f"Datasets may contain at most {MAX_DATASET_COLUMNS} columns.")
     return table.to_pandas()
 
 

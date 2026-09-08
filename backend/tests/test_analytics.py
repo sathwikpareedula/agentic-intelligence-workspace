@@ -13,11 +13,11 @@ from app.agent.models import AgentDatasetResource, AgentTaskResources, AnswerCla
 from app.agent.tools import ToolRegistry, dataset_tools, general_task_tools
 from app.agent.verification import EvidenceVerifier
 from app.main import app
-from app.models.analytics import AnalyticsPlan, MetricSpec
+from app.models.analytics import AnalyticsFilter, AnalyticsPlan, MetricSpec
 from app.models.workflows import WorkflowCreate, WorkflowStep
 from app.services.analytics import AnalyticsError, execute_dataset_analytics, execute_uploaded_analytics
 from app.services.artifacts import InMemoryArtifactRepository
-from app.services.datasets import load_dataset
+from app.services.datasets import LoadedDataset, load_dataset
 from app.services.postgres_source import PostgresSourceError, validate_select
 from app.services.workflows import InMemoryWorkflowRepository, WorkflowService
 
@@ -51,6 +51,32 @@ def test_count_sum_mean_median() -> None:
     assert facts["metric.median_net_sales"] == 800
 
 
+def test_categorical_distinct_count_group_compare_and_unique_group_fact_identity() -> None:
+    distinct = execute_uploaded_analytics(
+        "labels.csv",
+        b"label\na\nb\na\n",
+        _plan(analysis="metrics", metrics=[MetricSpec(name="distinct_count", column="label")]),
+    )
+    assert distinct.verification_facts["metric.distinct_count_label"] == 2
+
+    compared = execute_uploaded_analytics(
+        "groups.csv",
+        b"group,value\na,1\na,2\nb,3\n",
+        _plan(analysis="group_compare", group_by=["group"], value_column="value"),
+    )
+    assert len(compared.facts) == 6
+    assert len(compared.verification_facts) == 6
+    assert {fact.row_count for fact in compared.facts if fact.grouping == {"group": "a"}} == {2}
+
+    collision = execute_uploaded_analytics(
+        "groups.csv",
+        b"a,b,value\na_b,c,1\na,b_c,2\n",
+        _plan(analysis="metrics", group_by=["a", "b"], metrics=[MetricSpec(name="sum", column="value")]),
+    )
+    assert len(collision.verification_facts) == 2
+    assert {fact.value for fact in collision.facts} == {1, 2}
+
+
 def test_grouped_aggregation_and_ranking() -> None:
     result = execute_uploaded_analytics(
         "analytics_sales.csv",
@@ -77,6 +103,7 @@ def test_percent_change_rolling_correlation_and_target_variance() -> None:
     series = b"period,value,other\n1,10,4\n2,20,8\n3,40,16\n"
     change = execute_uploaded_analytics("series.csv", series, _plan(analysis="percent_change", value_column="value", order_column="period"))
     assert change.verification_facts["percent_change.last"] == 100
+    assert next(fact for fact in change.facts if fact.key == "percent_change.last").unit == "percent"
     rolling = execute_uploaded_analytics("series.csv", series, _plan(analysis="rolling_mean", value_column="value", order_column="period", window=2))
     assert rolling.verification_facts["rolling.mean.last"] == 30
     corr = execute_uploaded_analytics("series.csv", series, _plan(analysis="correlation", value_column="value", second_column="other"))
@@ -99,6 +126,34 @@ def test_percent_change_rolling_correlation_and_target_variance() -> None:
     assert "Alice" in variance.explanation
 
 
+def test_percent_change_negative_denominator_and_unit_aware_verification() -> None:
+    result = execute_uploaded_analytics(
+        "series.csv",
+        b"period,value\n1,-10\n2,-5\n",
+        _plan(analysis="percent_change", value_column="value", order_column="period"),
+    )
+    assert result.verification_facts["percent_change.last"] == -50
+    observation = _obs(result)
+    verified = EvidenceVerifier().verify(
+        [
+            AnswerClaim(
+                text="The percent change is -50%",
+                kind="numeric",
+                value=-50,
+                evidence_keys=["percent_change.last"],
+                unit="percent",
+            )
+        ],
+        [observation],
+    )
+    assert verified.status == "verified"
+    confused = EvidenceVerifier().verify(
+        [AnswerClaim(text="The ratio is -50", kind="numeric", value=-50, evidence_keys=["percent_change.last"])],
+        [observation],
+    )
+    assert confused.status == "unsupported"
+
+
 def test_nulls_division_by_zero_and_invalid_types() -> None:
     with pytest.raises(AnalyticsError, match="Division by zero"):
         execute_uploaded_analytics("z.csv", b"period,value\n1,0\n2,10\n", _plan(analysis="percent_change", value_column="value", order_column="period"))
@@ -110,6 +165,102 @@ def test_nulls_division_by_zero_and_invalid_types() -> None:
             b"value\n1\nNA\n",
             _plan(analysis="metrics", metrics=[MetricSpec(name="sum", column="value")], nulls="fail"),
         )
+    with pytest.raises(AnalyticsError, match="finite"):
+        execute_uploaded_analytics(
+            "infinity.csv",
+            b"value\ninf\n1\n",
+            _plan(analysis="metrics", metrics=[MetricSpec(name="sum", column="value")]),
+        )
+    with pytest.raises(AnalyticsError, match="exact analytical fact range"):
+        execute_uploaded_analytics(
+            "large.csv",
+            b"value\n9007199254740993\n",
+            _plan(analysis="metrics", metrics=[MetricSpec(name="sum", column="value")]),
+        )
+    with pytest.raises(AnalyticsError, match="Rank requires"):
+        execute_uploaded_analytics(
+            "null.csv",
+            b"value\nNA\n",
+            _plan(analysis="rank", value_column="value"),
+        )
+
+
+def test_plan_rejects_ambiguous_combinations_and_output_collisions() -> None:
+    with pytest.raises(Exception, match="non-empty list"):
+        AnalyticsFilter(column="region", operator="in", value=[])
+    with pytest.raises(Exception, match="does not accept"):
+        AnalyticsFilter(column="region", operator="is_null", value="North")
+    with pytest.raises(Exception, match="only accepted"):
+        _plan(analysis="rank", value_column="net_sales", metrics=[MetricSpec(name="count")])
+    with pytest.raises(Exception, match="does not support group_by"):
+        _plan(analysis="percent_change", group_by=["region"], value_column="net_sales", order_column="month")
+    with pytest.raises(AnalyticsError, match="unique"):
+        execute_uploaded_analytics(
+            "values.csv",
+            b"value\n1\n",
+            _plan(
+                analysis="metrics",
+                metrics=[MetricSpec(name="sum", column="value", alias="same"), MetricSpec(name="max", column="value", alias="same")],
+            ),
+        )
+    with pytest.raises(AnalyticsError, match="overlap"):
+        execute_uploaded_analytics(
+            "values.csv",
+            b"group,value\na,1\n",
+            _plan(analysis="metrics", group_by=["group"], metrics=[MetricSpec(name="sum", column="value", alias="group")]),
+        )
+    with pytest.raises(AnalyticsError, match="complete window"):
+        execute_uploaded_analytics(
+            "values.csv",
+            b"period,value\n1,1\n2,2\n",
+            _plan(analysis="rolling_mean", value_column="value", order_column="period", window=3),
+        )
+    duplicate_frame = pd.DataFrame([[1, 2]], columns=["value", "value"])
+    with pytest.raises(AnalyticsError, match="unique column names"):
+        execute_dataset_analytics(
+            LoadedDataset("duplicate.csv", "csv", None, duplicate_frame),
+            _plan(analysis="metrics", metrics=[MetricSpec(name="sum", column="value")]),
+        )
+
+
+def test_percentile_variance_rank_ties_and_null_groups_are_deterministic() -> None:
+    metrics = execute_uploaded_analytics(
+        "values.csv",
+        b"value\n1\n2\n3\n4\n",
+        _plan(
+            analysis="metrics",
+            metrics=[
+                MetricSpec(name="variance", column="value"),
+                MetricSpec(name="std", column="value"),
+                MetricSpec(name="percentile", column="value", percentile=0),
+                MetricSpec(name="percentile", column="value", percentile=100),
+            ],
+        ),
+    )
+    assert metrics.verification_facts["metric.variance_value"] == pytest.approx(5 / 3)
+    assert metrics.verification_facts["metric.std_value"] == pytest.approx((5 / 3) ** 0.5)
+    assert metrics.verification_facts["metric.p0_value"] == 1
+    assert metrics.verification_facts["metric.p100_value"] == 4
+
+    ranked = execute_uploaded_analytics(
+        "rank.csv",
+        b"name,value\nfirst,10\nsecond,10\nthird,5\n",
+        _plan(analysis="rank", value_column="value", rank_method="dense", ascending=False),
+    )
+    assert [row["name"] for row in ranked.rows[:2]] == ["first", "second"]
+    assert [row["rank"] for row in ranked.rows] == [1, 1, 2]
+
+    grouped = execute_dataset_analytics(
+        LoadedDataset(
+            "groups.csv",
+            "csv",
+            None,
+            pd.DataFrame({"group": [None, "None"], "value": [1, 2]}),
+        ),
+        _plan(analysis="metrics", group_by=["group"], metrics=[MetricSpec(name="sum", column="value")]),
+    )
+    assert len(grouped.verification_facts) == 2
+    assert {fact.grouping["group"] for fact in grouped.facts} == {None, "None"}
 
 
 def test_schema_mismatch_and_unsafe_sql() -> None:
@@ -162,6 +313,25 @@ def test_facts_ground_verifier_and_workflow_rerun() -> None:
     assert drifted.status == "failed"
 
 
+def test_verifier_rejects_stale_duplicate_fact_identities_and_non_finite_values() -> None:
+    from app.agent.models import ToolObservation
+
+    observations = [
+        ToolObservation(success=True, summary="first", result={"verification_facts": {"metric.total": 10}}),
+        ToolObservation(success=True, summary="second", result={"verification_facts": {"metric.total": 10}}),
+    ]
+    report = EvidenceVerifier().verify(
+        [AnswerClaim(text="Total is 10", kind="numeric", value=10, evidence_keys=["metric.total"])],
+        observations,
+    )
+    assert report.status == "unsupported"
+    non_finite = EvidenceVerifier().verify(
+        [AnswerClaim(text="Total is 10", kind="numeric", value=10, evidence_keys=["metric.total"])],
+        [ToolObservation(success=True, summary="bad", result={"verification_facts": {"metric.total": float("inf")}})],
+    )
+    assert non_finite.status == "unsupported"
+
+
 def test_agent_requires_bound_inspected_dataset() -> None:
     resources = AgentTaskResources(
         datasets=[AgentDatasetResource(filename="analytics_sales.csv", content_base64=base64.b64encode(SALES).decode())]
@@ -195,6 +365,15 @@ def test_analytics_api_validate_and_execute() -> None:
     )
     assert executed.status_code == 200
     assert executed.json()["verification_facts"]["metric.count"] == 3
+    oversized = client.post(
+        "/analytics/execute-payload",
+        json={
+            "filename": "large.csv",
+            "content_base64": base64.b64encode(b"x\n" + b"1" * (10 * 1024 * 1024 + 1)).decode(),
+            "plan": plan.model_dump(mode="json"),
+        },
+    )
+    assert oversized.status_code == 413
 
 
 def _obs(executed):

@@ -120,7 +120,9 @@ def test_external_postgres_connector_is_read_only_and_importable() -> None:
     from urllib.parse import urlparse
 
     from app.models.sources import PostgresTableRef
-    from app.services.postgres_source import import_source, list_catalog, validate_select
+    from app.models.analytics import AnalyticsSqlRequest
+    from app.services.analytics import execute_sql_analytics
+    from app.services.postgres_source import PostgresSourceError, import_source, list_catalog, test_connection, validate_select
     from app.models.sources import PostgresImportRequest, PostgresSourceConfig
 
     database_url = os.environ["TEST_DATABASE_URL"]
@@ -130,10 +132,12 @@ def test_external_postgres_connector_is_read_only_and_importable() -> None:
     with psycopg.connect(database_url) as connection:
         connection.execute("CREATE SCHEMA IF NOT EXISTS external_demo")
         connection.execute("DROP TABLE IF EXISTS external_demo.orders")
+        connection.execute("DROP SEQUENCE IF EXISTS external_demo.review_sequence")
         connection.execute(
             "CREATE TABLE external_demo.orders (order_id text PRIMARY KEY, customer_name text, amount numeric)"
         )
         connection.execute("INSERT INTO external_demo.orders VALUES ('O-1', 'Ada', 10)")
+        connection.execute("CREATE SEQUENCE external_demo.review_sequence")
         connection.commit()
     config = PostgresSourceConfig(
         host=parsed.hostname or "127.0.0.1",
@@ -144,6 +148,7 @@ def test_external_postgres_connector_is_read_only_and_importable() -> None:
         sslmode="disable",
     )
     try:
+        assert test_connection(config)["read_only_session"] is True
         catalog = list_catalog(config)
         names = {(item.schema_name, item.name) for item in catalog.tables}
         assert ("external_demo", "orders") in names
@@ -153,6 +158,17 @@ def test_external_postgres_connector_is_read_only_and_importable() -> None:
         assert imported.inspection.row_count == 1
         assert imported.provenance.source_type == "postgres"
         assert password not in imported.model_dump_json()
+        sql_result = execute_sql_analytics(
+            AnalyticsSqlRequest(source=config, select_sql="SELECT count(*) AS total FROM external_demo.orders")
+        )
+        assert sql_result.verification_facts["sql.total"] == 1
+        with pytest.raises(PostgresSourceError, match="read-only"):
+            import_source(
+                PostgresImportRequest(
+                    source=config,
+                    select_sql="SELECT nextval('external_demo.review_sequence') AS value",
+                )
+            )
         with pytest.raises(Exception):
             validate_select("INSERT INTO external_demo.orders VALUES ('x')")
         with pytest.raises(Exception):
@@ -161,4 +177,5 @@ def test_external_postgres_connector_is_read_only_and_importable() -> None:
         os.environ.pop("EXTERNAL_PG_PASSWORD", None)
         with psycopg.connect(database_url) as connection:
             connection.execute("DROP TABLE IF EXISTS external_demo.orders")
+            connection.execute("DROP SEQUENCE IF EXISTS external_demo.review_sequence")
             connection.commit()

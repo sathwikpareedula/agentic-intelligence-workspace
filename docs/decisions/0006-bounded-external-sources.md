@@ -20,8 +20,8 @@ Phase 2 needs high-value structured and document sources without expanding execu
 - JSON refuses ambiguous envelopes instead of guessing.
 - Parquet is metadata-bounded then loaded through pyarrow.
 - TXT uses the PDF chunker and is stored as untrusted evidence text.
-- PostgreSQL accepts only a single WITH/SELECT or identifier-quoted table read; writes and multi-statements are rejected; sessions are `READ ONLY`.
-- REST is GET/HTTPS (HTTP loopback only when `ALLOW_PRIVATE_REST_TARGETS=1`), with redirect revalidation, IP pinning at connect time, IPv4-mapped address classification, size limits, JSON content types, and fail-closed cross-origin redirects when secret-bearing headers are present.
+- PostgreSQL accepts only one lexically validated non-recursive WITH/SELECT or identifier-quoted non-system table read; writes, system catalogs, known side-effecting functions, and multi-statements are rejected; the transaction verifies `READ ONLY`. The lexical allowlist is defense in depth and the source database role must remain least privilege.
+- REST is GET/HTTPS (HTTP private targets only when `ALLOW_PRIVATE_REST_TARGETS=1`), with redirect revalidation, IP pinning at connect time, original-host TLS verification/Host, IPv4-mapped address classification, size limits, JSON content types, no secret-like query parameters, and fail-closed cross-origin redirects whenever any secret-referenced header is configured.
 - Agent tools bind pre-approved source names; they cannot supply raw passwords or invent production URLs that skip SSRF checks.
 
 ## Tradeoffs

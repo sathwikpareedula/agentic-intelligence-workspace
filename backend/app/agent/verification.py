@@ -1,6 +1,6 @@
 """Practical verification against the agent's own deterministic observations."""
 
-from math import isclose
+from math import isclose, isfinite
 
 from app.agent.models import AnswerClaim, ToolObservation, VerificationFinding, VerificationReport
 
@@ -11,17 +11,37 @@ class EvidenceVerifier:
         source_ids = {source for item in observations if item.success for source in item.source_ids}
         values = []
         facts: dict[str, float] = {}
+        fact_units: dict[str, str] = {}
+        ambiguous_fact_keys: set[str] = set()
         result_statuses = set()
         for item in observations:
             if item.result and item.success:
                 values.extend(_numeric_values(item.result))
                 raw_facts = item.result.get("verification_facts", {})
                 if isinstance(raw_facts, dict):
-                    facts.update(
-                        (str(key), float(value))
-                        for key, value in raw_facts.items()
-                        if isinstance(value, (int, float)) and not isinstance(value, bool)
-                    )
+                    for key, value in raw_facts.items():
+                        if not isinstance(value, (int, float)) or isinstance(value, bool):
+                            continue
+                        numeric = float(value)
+                        if not isfinite(numeric):
+                            continue
+                        normalized_key = str(key)
+                        if normalized_key in facts:
+                            ambiguous_fact_keys.add(normalized_key)
+                        else:
+                            facts[normalized_key] = numeric
+                raw_fact_details = item.result.get("facts", [])
+                if isinstance(raw_fact_details, list):
+                    for detail in raw_fact_details:
+                        if not isinstance(detail, dict) or not isinstance(detail.get("key"), str):
+                            continue
+                        unit = detail.get("unit")
+                        if isinstance(unit, str) and unit:
+                            key = detail["key"]
+                            if key in fact_units and fact_units[key].casefold() != unit.casefold():
+                                ambiguous_fact_keys.add(key)
+                            else:
+                                fact_units[key] = unit
             if item.result and isinstance(item.result.get("status"), str):
                 result_statuses.add(item.result["status"])
             for warning in item.warnings:
@@ -42,6 +62,16 @@ class EvidenceVerifier:
 
         for claim in claims:
             if claim.kind == "numeric":
+                ambiguous_keys = [key for key in claim.evidence_keys if key in ambiguous_fact_keys]
+                if ambiguous_keys:
+                    findings.append(
+                        VerificationFinding(
+                            status="unsupported",
+                            claim=claim.text,
+                            explanation="Named deterministic fact identity is ambiguous across multiple tool results.",
+                        )
+                    )
+                    continue
                 keyed_values = [facts[key] for key in claim.evidence_keys if key in facts]
                 candidates = keyed_values if claim.evidence_keys else ([] if facts else values)
                 matches = [
@@ -50,15 +80,33 @@ class EvidenceVerifier:
                 ]
                 numeric_match = bool(matches) and (all(matches) if claim.evidence_keys else any(matches))
                 missing_keys = [key for key in claim.evidence_keys if key not in facts]
+                expected_units = {
+                    fact_units[key].casefold()
+                    for key in claim.evidence_keys
+                    if key in fact_units
+                }
+                unit_matches = not expected_units or (
+                    claim.unit is not None
+                    and len(expected_units) == 1
+                    and claim.unit.casefold() in expected_units
+                )
                 commission_claim = any(key.startswith("commission.") or key == "total.commission" for key in claim.evidence_keys)
                 policy_grounded = not commission_claim or (
                     bool(claim.source_ids) and set(claim.source_ids).issubset(source_ids)
                 )
-                if numeric_match and not missing_keys and policy_grounded:
+                if numeric_match and not missing_keys and policy_grounded and unit_matches:
                     explanation = "Numeric value matches the named deterministic tool output."
                     if commission_claim:
                         explanation += " The commission claim also cites observed policy evidence."
                     findings.append(VerificationFinding(status="verified", claim=claim.text, explanation=explanation))
+                elif numeric_match and not missing_keys and not unit_matches:
+                    findings.append(
+                        VerificationFinding(
+                            status="unsupported",
+                            claim=claim.text,
+                            explanation="Numeric value matches, but the claim does not preserve the deterministic fact unit.",
+                        )
+                    )
                 elif commission_claim and numeric_match and not policy_grounded:
                     findings.append(VerificationFinding(status="insufficient_evidence", claim=claim.text, explanation="Commission value matches deterministic output but is not linked to observed policy evidence."))
                 else:
@@ -85,7 +133,11 @@ def _numeric_values(value) -> list[float]:
     if isinstance(value, bool):
         return []
     if isinstance(value, (int, float)):
-        return [float(value)]
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            return []
+        return [number] if isfinite(number) else []
     if isinstance(value, dict):
         return [number for child in value.values() for number in _numeric_values(child)]
     if isinstance(value, list):

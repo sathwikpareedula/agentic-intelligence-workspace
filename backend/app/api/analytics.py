@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from app.api.datasets import _read_upload
 from app.models.analytics import AnalyticsExecuteRequest, AnalyticsPlan, AnalyticsResult, AnalyticsSqlRequest
 from app.services.analytics import AnalyticsError, execute_dataset_analytics, execute_sql_analytics, validate_plan
+from app.services.datasets import DatasetReadError, DatasetTooLargeError, UnsupportedFileTypeError
 from app.services.postgres_source import PostgresSourceError
 from app.services.secrets import SecretError
 
@@ -47,7 +48,11 @@ def analytics_execute_payload(request: AnalyticsExecuteRequest) -> AnalyticsResu
         content = base64.b64decode(request.content_base64, validate=True)
         dataset = load_dataset(request.filename, content, request.sheet)
         return execute_dataset_analytics(dataset, request.plan)
-    except (AnalyticsError, ValueError) as exc:
+    except DatasetTooLargeError as exc:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
+    except UnsupportedFileTypeError as exc:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
+    except (AnalyticsError, DatasetReadError, ValueError) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 

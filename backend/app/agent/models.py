@@ -33,6 +33,7 @@ class AnswerClaim(StrictModel):
     value: float | None = None
     source_ids: list[str] = Field(default_factory=list)
     evidence_keys: list[str] = Field(default_factory=list)
+    unit: str | None = Field(default=None, min_length=1, max_length=50)
 
 
 ModelDecision = Annotated[ToolCall | Complete, Field(discriminator="type")]
@@ -229,6 +230,20 @@ class AgentPostgresSource(StrictModel):
     password_secret_ref: str = Field(min_length=1, max_length=100, pattern=r"^[A-Z][A-Z0-9_]*$")
     sslmode: str = Field(default="prefer", max_length=20)
 
+    @model_validator(mode="after")
+    def validate_source_config(self) -> "AgentPostgresSource":
+        from app.models.sources import PostgresSourceConfig
+
+        PostgresSourceConfig(
+            host=self.host,
+            port=self.port,
+            database=self.database,
+            user=self.user,
+            password_secret_ref=self.password_secret_ref,
+            sslmode=self.sslmode,
+        )
+        return self
+
 
 class AgentRestSource(StrictModel):
     name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
@@ -236,6 +251,18 @@ class AgentRestSource(StrictModel):
     header_secret_refs: dict[str, str] = Field(default_factory=dict, max_length=10)
     query: dict[str, str] = Field(default_factory=dict, max_length=20)
     records_key: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_source_config(self) -> "AgentRestSource":
+        from app.models.sources import RestSourceConfig
+
+        RestSourceConfig(
+            url=self.url,
+            header_secret_refs=self.header_secret_refs,
+            query=self.query,
+            records_key=self.records_key,
+        )
+        return self
 
 
 AgentTaskResources.model_rebuild()

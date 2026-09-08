@@ -17,13 +17,15 @@ import pyarrow.parquet as pq
 from app.agent.models import AgentTaskResources, AgentPostgresSource
 from app.agent.tools import ToolRegistry, general_task_tools, source_tools
 from app.main import app
-from app.models.sources import PostgresImportRequest, PostgresSourceConfig, RestSourceConfig
+from pydantic import ValidationError
+
+from app.models.sources import PostgresImportRequest, PostgresSourceConfig, PostgresTableRef, RestSourceConfig
 from app.models.workflows import WorkflowCreate, WorkflowStep
 from app.services.artifacts import InMemoryArtifactRepository
-from app.services.datasets import MAX_UPLOAD_BYTES, load_dataset, profile_dataset
+from app.services.datasets import MAX_DATASET_COLUMNS, MAX_UPLOAD_BYTES, DatasetTooLargeError, load_dataset, profile_dataset
 from app.services.json_adapter import JsonAdapterError, frame_from_json
 from app.services.postgres_source import PostgresSourceError, validate_select
-from app.services.rest_source import RestSourceError, assert_ip_allowed, effective_ip, import_rest
+from app.services.rest_source import RestSourceError, _request_pinned, assert_ip_allowed, effective_ip, import_rest
 from app.services.retrieval import RetrievalService
 from app.embeddings.deterministic import DeterministicEmbeddingProvider
 from app.repositories.documents import InMemoryDocumentRepository
@@ -71,6 +73,10 @@ def test_json_ambiguity_and_malformed_and_utf8() -> None:
         frame_from_json(json.dumps([{"customer": {"name": "Ada"}, "customer.name": "Other"}]).encode())
     scalars = frame_from_json(json.dumps([1, 2, 3]).encode())
     assert list(scalars["value"]) == [1, 2, 3]
+    with pytest.raises(JsonAdapterError, match="not finite"):
+        frame_from_json(b'[{"value": NaN}]')
+    with pytest.raises(JsonAdapterError):
+        frame_from_json(("[" * 1100 + "]" * 1100).encode())
 
 
 def test_json_size_boundary_rejected() -> None:
@@ -89,6 +95,12 @@ def test_parquet_inspect_and_malformed() -> None:
     assert ok.json()["row_count"] == 1
     bad = client.post("/datasets/inspect", files={"file": ("orders.parquet", b"not-parquet", "application/octet-stream")})
     assert bad.status_code == 422
+    too_wide = _parquet_bytes([{f"c{index}": index for index in range(MAX_DATASET_COLUMNS + 1)}])
+    with pytest.raises(DatasetTooLargeError, match="columns"):
+        load_dataset("wide.parquet", too_wide)
+    nested = _parquet_bytes([{"order_id": "O-1", "items": [1, 2]}])
+    with pytest.raises(Exception, match="Nested Parquet"):
+        load_dataset("nested.parquet", nested)
 
 
 def test_txt_ingestion_retrieval_and_prompt_injection_as_data() -> None:
@@ -105,6 +117,7 @@ def test_txt_ingestion_retrieval_and_prompt_injection_as_data() -> None:
 
 def test_postgres_sql_validation_blocks_writes_and_multi_statements() -> None:
     assert validate_select("SELECT * FROM external_demo.orders").startswith("SELECT")
+    assert validate_select("SELECT 'DELETE; pg_sleep(10)' AS ordinary_text")
     with pytest.raises(PostgresSourceError, match="read-only"):
         validate_select("DELETE FROM external_demo.orders")
     with pytest.raises(PostgresSourceError, match="Multiple"):
@@ -119,6 +132,26 @@ def test_postgres_sql_validation_blocks_writes_and_multi_statements() -> None:
         validate_select("SELECT set_config('statement_timeout', '0', false)")
     with pytest.raises(PostgresSourceError, match="read-only"):
         validate_select("ANALYZE external_demo.orders")
+    for unsafe in (
+        "WITH RECURSIVE x AS (SELECT 1 UNION ALL SELECT * FROM x) SELECT * FROM x",
+        "SELECT pg_sleep(10)",
+        "SELECT pg_advisory_lock(1)",
+        "SELECT current_setting('data_directory')",
+        "SELECT lo_get(1)",
+        "SELECT * FROM pg_catalog.pg_authid",
+        'SELECT * FROM "information_schema"."tables"',
+        "SELECT 1 /* unterminated",
+        "SELECT $$unterminated",
+    ):
+        with pytest.raises(PostgresSourceError):
+            validate_select(unsafe)
+    with pytest.raises(PostgresSourceError, match="System PostgreSQL schemas"):
+        from app.services.postgres_source import inspect_table
+
+        inspect_table(
+            PostgresSourceConfig(host="localhost", database="db", user="reader", password_secret_ref="MISSING"),
+            PostgresTableRef(schema="pg_catalog", table="pg_authid"),
+        )
 
 
 def test_postgres_import_omits_password_and_fails_closed_without_secret() -> None:
@@ -287,13 +320,13 @@ def test_rest_rejects_private_targets_invalid_type_oversize_and_malformed(monkey
         server.shutdown()
 
 
-def test_rest_cross_origin_redirect_does_not_forward_secrets(monkeypatch) -> None:
+def test_rest_cross_origin_redirect_does_not_forward_any_secret_referenced_header(monkeypatch) -> None:
     monkeypatch.setenv("PHASE2_REST_TOKEN", "super-secret-token")
     seen_auth: list[str | None] = []
 
     class TargetHandler(BaseHTTPRequestHandler):
         def do_GET(self):
-            seen_auth.append(self.headers.get("Authorization"))
+            seen_auth.append(self.headers.get("X-Tenant-Context"))
             body = b"[]"
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -318,13 +351,96 @@ def test_rest_cross_origin_redirect_does_not_forward_secrets(monkeypatch) -> Non
     try:
         with pytest.raises(RestSourceError, match="cross-origin"):
             import_rest(
-                RestSourceConfig(url=f"{start_base}/start", header_secret_refs={"Authorization": "PHASE2_REST_TOKEN"}),
+                RestSourceConfig(url=f"{start_base}/start", header_secret_refs={"X-Tenant-Context": "PHASE2_REST_TOKEN"}),
                 allow_private=True,
             )
     finally:
         start.shutdown()
         target.shutdown()
     assert seen_auth == []
+
+
+def test_rest_rejects_secret_queries_hop_by_hop_headers_and_multiline_secret(monkeypatch) -> None:
+    with pytest.raises(ValidationError, match="Secret-like REST query"):
+        RestSourceConfig(url="https://example.com/data?api_key=raw-secret")
+    with pytest.raises(ValidationError, match="Secret-like REST query"):
+        RestSourceConfig(url="https://example.com/data", query={"access_token": "raw-secret"})
+    with pytest.raises(ValidationError, match="cannot be supplied"):
+        RestSourceConfig(url="https://example.com/data", header_secret_refs={"host": "HOST_REF"})
+    raw_secret = "must-not-be-echoed"
+    response = client.post(
+        "/sources/rest/import",
+        json={"source": {"url": f"https://example.com/data?access_token={raw_secret}"}},
+    )
+    assert response.status_code == 422
+    assert raw_secret not in response.text
+    monkeypatch.setenv("MULTILINE_HEADER", "first\r\nInjected: value")
+    with pytest.raises(RestSourceError, match="single-line"):
+        import_rest(
+            RestSourceConfig(url="https://example.com/data", header_secret_refs={"X-Custom": "MULTILINE_HEADER"})
+        )
+
+
+def test_rest_pinned_https_preserves_original_sni_and_host(monkeypatch) -> None:
+    from urllib.parse import urlsplit
+    import app.services.rest_source as rest_source
+
+    observed: dict[str, object] = {}
+
+    class Socket:
+        def settimeout(self, timeout):
+            observed["socket_timeout"] = timeout
+
+    class Context:
+        def wrap_socket(self, sock, server_hostname):
+            observed["sni"] = server_hostname
+            return sock
+
+    class Response:
+        status = 200
+
+        def getheader(self, name):
+            return None
+
+        def getheaders(self):
+            return [("Content-Type", "application/json")]
+
+        def read(self, _limit):
+            return b"[]"
+
+    class Connection:
+        def __init__(self, host, port, timeout):
+            observed["connection_host"] = host
+            observed["connection_port"] = port
+            self.sock = None
+
+        def request(self, method, path, headers):
+            observed["request"] = (method, path, headers)
+
+        def getresponse(self):
+            return Response()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(rest_source.socket, "create_connection", lambda target, timeout: observed.update(target=target) or Socket())
+    monkeypatch.setattr(rest_source.ssl, "create_default_context", lambda: Context())
+    monkeypatch.setattr(rest_source, "HTTPConnection", Connection)
+
+    _request_pinned(
+        urlsplit("https://api.example:8443/data?q=1"),
+        "api.example",
+        "203.0.113.10",
+        {"Accept": "application/json"},
+        2.0,
+    )
+    assert observed["target"] == ("203.0.113.10", 8443)
+    assert observed["sni"] == "api.example"
+    assert observed["request"] == (
+        "GET",
+        "/data?q=1",
+        {"Accept": "application/json", "Host": "api.example:8443"},
+    )
 
 
 def test_rest_redirect_is_revalidated() -> None:
@@ -388,3 +504,39 @@ def test_workflow_override_cannot_inject_password() -> None:
     run = workflows.rerun(workflow.workflow_id, {1: {"password": "stolen"}})
     assert run.status == "failed"
     assert "secrets" in (run.error or "").casefold()
+
+
+def test_external_source_workflow_rerun_pins_source_and_drops_rejected_secret_override() -> None:
+    repository = InMemoryWorkflowRepository()
+    workflows = WorkflowService(repository, ToolRegistry(source_tools()), InMemoryArtifactRepository())
+    config = PostgresSourceConfig(
+        host="db.example",
+        database="warehouse",
+        user="reader",
+        password_secret_ref="WAREHOUSE_PASSWORD",
+    )
+    workflow = workflows.create(
+        WorkflowCreate(
+            name="Pinned source",
+            steps=[
+                WorkflowStep(
+                    tool="source.postgres.import",
+                    arguments=PostgresImportRequest(source=config, select_sql="SELECT 1 AS value").model_dump(mode="json"),
+                )
+            ],
+        )
+    )
+    switched = workflows.rerun(
+        workflow.workflow_id,
+        {1: {"source": {**config.model_dump(mode="json"), "host": "other.example"}}},
+    )
+    assert switched.status == "failed"
+    assert "pinned" in (switched.error or "").casefold()
+    raw_secret = "must-not-be-persisted"
+    rejected = workflows.rerun(
+        workflow.workflow_id,
+        {1: {"source": {**config.model_dump(mode="json"), "password": raw_secret}}},
+    )
+    assert rejected.status == "failed"
+    assert raw_secret not in rejected.model_dump_json()
+    assert raw_secret not in repository.runs[rejected.run_id].model_dump_json()

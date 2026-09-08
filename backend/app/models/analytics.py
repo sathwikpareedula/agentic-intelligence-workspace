@@ -44,16 +44,34 @@ class AnalyticsFilter(StrictModel):
     operator: Literal["eq", "ne", "gt", "gte", "lt", "lte", "in", "not_in", "is_null", "not_null"]
     value: Scalar | list[Scalar] = None
 
+    @model_validator(mode="after")
+    def validate_value(self) -> "AnalyticsFilter":
+        if self.operator in {"is_null", "not_null"}:
+            if self.value is not None:
+                raise ValueError(f"Operator '{self.operator}' does not accept a value.")
+            return self
+        if self.operator in {"in", "not_in"}:
+            if not isinstance(self.value, list) or not self.value:
+                raise ValueError(f"Operator '{self.operator}' requires a non-empty list value.")
+            if len(self.value) > 1_000:
+                raise ValueError("Filter lists may contain at most 1000 values.")
+            return self
+        if isinstance(self.value, list) or self.value is None:
+            raise ValueError(f"Operator '{self.operator}' requires one non-null scalar value.")
+        return self
+
 
 class MetricSpec(StrictModel):
     name: MetricName
     column: str | None = Field(default=None, max_length=200)
     percentile: float | None = Field(default=None, ge=0, le=100)
-    alias: str | None = Field(default=None, max_length=200)
+    alias: str | None = Field(default=None, min_length=1, max_length=200)
 
     @model_validator(mode="after")
     def validate_metric(self) -> "MetricSpec":
         if self.name == "count":
+            if self.column is not None or self.percentile is not None:
+                raise ValueError("count does not accept a column or percentile.")
             return self
         if not self.column:
             raise ValueError(f"Metric '{self.name}' requires a column.")
@@ -82,8 +100,16 @@ class AnalyticsPlan(StrictModel):
 
     @model_validator(mode="after")
     def validate_plan(self) -> "AnalyticsPlan":
+        if len(self.group_by) != len(set(self.group_by)):
+            raise ValueError("group_by columns must be unique.")
+        if len(self.expected_columns) != len(set(self.expected_columns)):
+            raise ValueError("expected_columns must not contain duplicate names.")
         if self.analysis == "metrics" and not self.metrics:
             self.metrics = [MetricSpec(name="count")]
+        if self.analysis == "metrics" and self.value_column is not None:
+            raise ValueError("value_column is not used for metrics; specify columns on each metric.")
+        if self.analysis != "metrics" and self.metrics:
+            raise ValueError("metrics are only accepted when analysis='metrics'.")
         if self.analysis in {"percent_change", "growth_rate", "rolling_mean", "rank", "target_variance", "correlation", "distribution", "group_compare"}:
             if not self.value_column:
                 raise ValueError(f"Analysis '{self.analysis}' requires value_column.")
@@ -95,6 +121,18 @@ class AnalyticsPlan(StrictModel):
             raise ValueError("rolling_mean requires window.")
         if self.analysis == "group_compare" and not self.group_by:
             raise ValueError("group_compare requires group_by.")
+        if self.analysis == "target_variance" and not self.group_by:
+            raise ValueError("target_variance requires group_by.")
+        if self.group_by and self.analysis not in {"metrics", "group_compare", "rolling_mean", "target_variance"}:
+            raise ValueError(f"Analysis '{self.analysis}' does not support group_by.")
+        if self.window is not None and self.analysis != "rolling_mean":
+            raise ValueError("window is only valid for rolling_mean.")
+        if self.second_column is not None and self.analysis not in {"target_variance", "correlation"}:
+            raise ValueError("second_column is only valid for target_variance or correlation.")
+        if self.order_column is not None and self.analysis not in {"percent_change", "growth_rate", "rolling_mean"}:
+            raise ValueError("order_column is only valid for ordered analyses.")
+        if self.contributor_column is not None and self.analysis != "target_variance":
+            raise ValueError("contributor_column is only valid for target_variance.")
         return self
 
 
@@ -106,7 +144,7 @@ class NumericFact(StrictModel):
     dataset: str
     calculation: str
     row_count: int
-    grouping: dict[str, str] = Field(default_factory=dict)
+    grouping: dict[str, Scalar] = Field(default_factory=dict)
     unit: str | None = None
 
 
