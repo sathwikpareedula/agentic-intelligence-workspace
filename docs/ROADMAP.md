@@ -32,6 +32,7 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add typed analytical plans, deterministic pandas analytics, validated read-only SQL reuse, numeric facts grounded in the existing verifier, task-scoped tools, a focused UI, and a dedicated analytics evaluation family.
 - [x] Add immutable workflow-run lifecycle/history, input and schema fingerprints, persisted facts/verification/artifacts, bounded APIs and task-scoped tools, and deterministic “What Changed?” comparisons with a controlled two-period evaluation.
 - [x] Add compact run-quality/step snapshots and deterministic schema, volume, missing, duplicate, category, join, and trust drift deltas in the same comparison API and UI.
+- [x] Prove the recurring-workflow lifecycle with a public-API sales scenario spanning two verified periods, a real artifact, deterministic comparison, provenance, and a recorded blocked input.
 - Measure correctness, failure behavior, performance, and cost where applicable.
 
 ### Milestone 2 — Retrieval and knowledge foundation

@@ -78,6 +78,8 @@ Workflow history APIs list workflows and bounded newest-first runs, return a saf
 
 Run observability reuses tool observations rather than adding a telemetry stack. It stores tool name, success/blocked/failure state, warning/source/artifact counts, and selected numeric leaves from existing join, data-quality, and trace diagnostics. Drift comparison reports added/removed columns, explicit type changes, row/missing/duplicate/unique-count deltas, complete bounded category changes, join-quality deltas, verification/warning changes, and step outcome differences. It makes no statistical anomaly claim.
 
+The controlled recurring-sales scenario composes the existing typed analytics and transform-to-template tools in one stored workflow; it is evaluation coverage, not a separate demo execution engine. Both period runs, the workbook artifact, comparison facts, policy-source count, and blocked drift attempt pass through the same public workflow/run APIs used by other clients.
+
 ### Readiness and Failure Behavior
 
 `/health` reports process liveness. `/runtime` describes configuration without claiming live dependencies. `/ready` performs bounded checks for PostgreSQL connectivity, pgvector, current Alembic revision/required tables, artifact-path writability, and required provider configuration. Repository and hosted-provider failures map to stable 5xx responses without exposing DSNs, passwords, credential-bearing URLs, request details, or provider response bodies. `/runtime` reports whether orchestration is `demo`, `configured`, or `unavailable` without making a paid request.

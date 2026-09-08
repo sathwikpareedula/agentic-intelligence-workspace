@@ -74,6 +74,8 @@ Run history is newest-first and bounded. Deterministic comparison accepts two co
 
 The workflow-centered browser view exposes the immutable run timeline, current definition identity, verification and artifact state, explicit selection of two compatible completed runs, and provenance links back to both source runs. Metric bars and delta cards render saved comparison values; the frontend does not recalculate or synthesize business facts.
 
+The canonical recurring-sales evaluation demonstrates the product boundary end to end with two compatible periods: persisted workflow definition, typed analytics, policy-grounded template artifact, immutable verified runs, deterministic metric and drift comparison, source-run provenance, and an inspectable blocked schema change. It uses the normal APIs and repositories rather than hard-coded frontend results.
+
 Compact run-quality snapshots additionally record per-column missing counts, duplicate rows, inferred types, low-cardinality values/unique counts, existing join/data-quality diagnostics, and step outcome counts. Comparisons surface schema, volume, quality, category, join, and trust drift in the same response. Category labels are reported only when both value sets fit the bounded complete snapshot; otherwise only unique counts are compared. The system does not call these deterministic differences anomalies.
 
 ## Evidence-First Behavior

@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {"id": "A_workflow_persisted", "name": "Workflow persisted through public API"},
+    {"id": "B_distinct_immutable_runs", "name": "Distinct immutable period runs"},
+    {"id": "C_definition_identity", "name": "Workflow definition identity preserved"},
+    {"id": "D_verified_runs", "name": "Both period runs verified"},
+    {"id": "E_exact_metric_change", "name": "Exact deterministic sales changes"},
+    {"id": "F_row_count_change", "name": "Period row-count change"},
+    {"id": "G_real_artifact", "name": "Current verified artifact downloads"},
+    {"id": "H_comparison_provenance", "name": "Comparison references both source runs"},
+    {"id": "I_source_snapshots", "name": "Run source snapshots persisted"},
+    {"id": "J_category_drift", "name": "Order identity drift observed"},
+    {"id": "K_policy_provenance", "name": "Policy evidence remains linked"},
+    {"id": "L_blocked_drift_recorded", "name": "Unsafe schema drift remains inspectable"}
+  ]
+}

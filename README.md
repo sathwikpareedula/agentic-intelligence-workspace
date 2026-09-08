@@ -71,6 +71,7 @@ cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.sources ..\evals\source_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.analytics ..\evals\analytics_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.workflow_runs ..\evals\workflow_run_cases.json
+.\.venv\Scripts\python.exe -m app.evaluation.recurring_sales ..\evals\recurring_sales_cases.json
 ```
 
 All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. Source and analytics evaluations exercise the bounded connector and typed-computation contracts. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database unless the source evaluator receives an explicit isolated `TEST_DATABASE_URL`.
@@ -82,6 +83,8 @@ The Transform-to-Template evaluation covers all 18 controlled cases from exact a
 `sample_data/grades.csv` and `sample_data/syllabus.pdf` exercise cited policy evidence plus deterministic weighted-grade calculation. The August sales files and `commission_policy.pdf` exercise cleaning, join diagnostics, targets, underperformance, deterministic commissions, verification, a management workbook, and a saved/rerunnable recipe. Tests contain the executable end-to-end paths and fixed expected outputs.
 
 `sample_data/analytics_sales.csv` and `sample_data/analytics_sales_september.csv` are compatible period inputs for the workflow-run evaluator. It saves one typed grouped-sales workflow, records separate August and September runs, and compares exact metric, group, row-count, schema, quality, category, verification, warning, artifact, join-diagnostic, and step changes. The browser’s saved-workflow panel can create runs from the currently selected inputs, list immutable lifecycle history, select any two completed compatible runs, and compare them in Business Metrics, Data Quality, Join Quality, Schema/Sources, and Trust/Execution sections. Compact before/current bars use the same saved deterministic facts; comparisons report observations only and do not invent business causes.
+
+The recurring-sales evaluator exercises the flagship lifecycle through the public API: retrieve policy evidence, save one analytics-plus-template workflow, execute August and September inputs as immutable verified runs, download the current workbook, compare persisted metrics and drift with both run references, and retain a deliberately schema-incompatible attempt as an inspectable blocked run. Its 12 controlled cases use in-memory repositories and deterministic providers; they do not claim hosted-model or live-database coverage.
 
 ### Recruiter north-star: August sales management report
 
