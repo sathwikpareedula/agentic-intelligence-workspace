@@ -39,6 +39,7 @@ Bounded execution, mixed reasoning, verification, workflows, artifacts, sales an
 - 2026-09-07: Added Phase 3 typed analytical plans executed with pandas, named numeric facts grounded in the existing verifier, optional validated read-only SQL reuse, task-scoped tools, a focused analytics UI, and a dedicated evaluation family. DuckDB was not introduced.
 - 2026-09-07: Added immutable reusable workflow runs with explicit terminal lifecycle, definition/source/schema fingerprints, type-drift blocking, safe run history APIs, persisted deterministic facts/verification/warnings/artifacts, task-scoped history tools, and deterministic same-workflow “What Changed?” comparisons. Added a two-period fixture/evaluator and focused workflow-run UI without introducing asynchronous infrastructure or model arithmetic.
 - 2026-09-08: Extended the same run snapshots/comparison with per-column missing counts, duplicate counts, bounded complete category identities, explicit added/removed columns and type changes, existing join/data-quality diagnostic deltas, and compact tool-step outcomes. The UI presents these as deterministic drift and trust changes, not anomalies.
+- 2026-09-08: Strengthened the workflow-centered browser experience with workflow identity and trust summaries, immutable lifecycle badges, explicit compatible-run selection, comparison-to-run provenance links, and compact before/current metric bars derived only from persisted deterministic facts.
 
 ## Technologies Actually Used
 

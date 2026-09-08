@@ -72,6 +72,8 @@ A workflow is an immutable versioned deterministic definition. Executing it crea
 
 Run history is newest-first and bounded. Deterministic comparison accepts two completed runs of the same workflow, matches facts by step-scoped semantic identity, and reports absolute/percentage changes, added/removed grouped facts, row-count and source/schema changes, verification/warning changes, and artifact availability. A missing metric is not zero, a zero prior value has no percentage change, and non-finite or meaning-shifted facts fail closed. These are observed changes, not causal explanations.
 
+The workflow-centered browser view exposes the immutable run timeline, current definition identity, verification and artifact state, explicit selection of two compatible completed runs, and provenance links back to both source runs. Metric bars and delta cards render saved comparison values; the frontend does not recalculate or synthesize business facts.
+
 Compact run-quality snapshots additionally record per-column missing counts, duplicate rows, inferred types, low-cardinality values/unique counts, existing join/data-quality diagnostics, and step outcome counts. Comparisons surface schema, volume, quality, category, join, and trust drift in the same response. Category labels are reported only when both value sets fit the bounded complete snapshot; otherwise only unique counts are compared. The system does not call these deterministic differences anomalies.
 
 ## Evidence-First Behavior

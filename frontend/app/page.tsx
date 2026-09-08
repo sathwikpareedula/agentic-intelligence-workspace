@@ -71,6 +71,7 @@ type WorkflowRun = {
   run_id: string;
   workflow_id: string;
   version: number;
+  definition_fingerprint?: string | null;
   status: "completed" | "failed";
   started_at: string;
   completed_at: string;
@@ -184,6 +185,8 @@ export default function WorkspacePage() {
   const [restSecretRef, setRestSecretRef] = useState("REST_BEARER_TOKEN");
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRun[]>([]);
   const [runComparison, setRunComparison] = useState<RunComparison | null>(null);
+  const [previousRunId, setPreviousRunId] = useState("");
+  const [currentRunId, setCurrentRunId] = useState("");
   const [runHistoryError, setRunHistoryError] = useState<string | null>(null);
   const [runBusy, setRunBusy] = useState(false);
   const activeWorkflow = execution?.saved_workflow ?? templateResult?.saved_workflow ?? null;
@@ -204,6 +207,8 @@ export default function WorkspacePage() {
     if (!activeWorkflow) {
       setWorkflowRuns([]);
       setRunComparison(null);
+      setPreviousRunId("");
+      setCurrentRunId("");
       return;
     }
     const controller = new AbortController();
@@ -211,6 +216,8 @@ export default function WorkspacePage() {
       .then((response) => apiJson<{ runs: WorkflowRun[] }>(response))
       .then((result) => {
         setWorkflowRuns(result.runs);
+        setPreviousRunId(result.runs[1]?.run_id ?? "");
+        setCurrentRunId(result.runs[0]?.run_id ?? "");
         setRunComparison(null);
         setRunHistoryError(null);
       })
@@ -417,6 +424,8 @@ export default function WorkspacePage() {
       await fetch(`${API}/workflows/${workflowId}/runs?limit=20`, { cache: "no-store" }),
     );
     setWorkflowRuns(result.runs);
+    setPreviousRunId(result.runs[1]?.run_id ?? "");
+    setCurrentRunId(result.runs[0]?.run_id ?? "");
     return result.runs;
   }
 
@@ -471,8 +480,8 @@ export default function WorkspacePage() {
     }
   }
 
-  async function compareLatestRuns() {
-    if (workflowRuns.length < 2 || runBusy) return;
+  async function compareSelectedRuns() {
+    if (!previousRunId || !currentRunId || previousRunId === currentRunId || runBusy) return;
     setRunBusy(true);
     setRunHistoryError(null);
     try {
@@ -480,8 +489,8 @@ export default function WorkspacePage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          previous_run_id: workflowRuns[1].run_id,
-          current_run_id: workflowRuns[0].run_id,
+          previous_run_id: previousRunId,
+          current_run_id: currentRunId,
         }),
       }));
       setRunComparison(result);
@@ -507,6 +516,10 @@ export default function WorkspacePage() {
         ? "Real provider configured"
         : "Provider unavailable"
     : runtimeError ? "Backend unavailable" : "Checking backend";
+  const latestRun = workflowRuns[0];
+  const comparisonPrevious = workflowRuns.find((run) => run.run_id === runComparison?.previous_run_id);
+  const comparisonCurrent = workflowRuns.find((run) => run.run_id === runComparison?.current_run_id);
+  const changedMetrics = runComparison?.metrics.filter((item) => item.status === "changed" && item.previous && item.current) ?? [];
 
   return <main>
     <header>
@@ -621,25 +634,45 @@ export default function WorkspacePage() {
       <section className="panel"><div className="panelTitle"><h2>Evidence & verification</h2><span>{execution?.citations.length ?? 0} citations</span></div>{execution?.warnings.length ? <div className="warnings"><strong>Data and join warnings</strong>{execution.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}{execution?.citations.map((citation) => <article className="citation" key={citation.chunk_id}><strong>{citation.filename} · page {citation.page_number}</strong><code>{citation.chunk_id}</code></article>)}{execution?.verification?.findings.map((finding, index) => <article className="finding" key={`${finding.claim}-${index}`}><span className={`pill ${finding.status}`}>{finding.status.replaceAll("_", " ")}</span><strong>{finding.claim}</strong><p>{finding.explanation}</p></article>) ?? <p className="muted">Source pages and claim checks will appear after execution.</p>}</section>
     </div>}
     {activeWorkflow && <section className="panel workflowRunsPanel">
-      <div className="panelTitle"><div><span className="eyebrow">REUSABLE WORKFLOW</span><h2>{activeWorkflow.name}</h2></div><span className={`pill ${workflowRuns[0]?.verification?.status ?? workflowRuns[0]?.status ?? "idle"}`}>{workflowRuns[0]?.verification?.status?.replaceAll("_", " ") ?? (workflowRuns.length ? workflowRuns[0].status : "No runs yet")}</span></div>
+      <div className="panelTitle"><div><span className="eyebrow">REUSABLE WORKFLOW</span><h2>{activeWorkflow.name}</h2></div><span className={`pill ${latestRun?.verification?.status ?? latestRun?.status ?? "idle"}`}>{latestRun?.verification?.status?.replaceAll("_", " ") ?? (latestRun?.status ?? "No runs yet")}</span></div>
+      <div className="workflowOverview" aria-label="Workflow overview">
+        <article><span>Definition</span><strong>Version {activeWorkflow.version}</strong><small title={latestRun?.definition_fingerprint ?? undefined}>{latestRun?.definition_fingerprint ? `sha256 ${latestRun.definition_fingerprint.slice(0, 12)}…` : "Recorded on first run"}</small></article>
+        <article><span>Run history</span><strong>{workflowRuns.length}</strong><small>Immutable executions</small></article>
+        <article><span>Latest inputs</span><strong>{latestRun?.input_snapshots.reduce((sum, item) => sum + (item.row_count ?? 0), 0) ?? 0} rows</strong><small>{latestRun?.input_snapshots.length ?? 0} source snapshots</small></article>
+        <article><span>Latest trust state</span><strong>{latestRun?.verification?.status?.replaceAll("_", " ") ?? "Not run"}</strong><small>{latestRun?.warnings.length ?? 0} warnings · {latestRun?.artifacts.length ?? 0} artifacts</small></article>
+      </div>
       <div className="workflowActions">
-        <div><strong>Version {activeWorkflow.version}</strong><p>Each execution is saved as an immutable run with input fingerprints, schema, facts, warnings, and artifacts.</p></div>
+        <div><strong>Run the same definition on permitted new-period inputs</strong><p>Source identity and schema are checked before deterministic tools execute. Blocked and failed attempts remain inspectable.</p></div>
         <button type="button" disabled={runBusy} onClick={runSavedWorkflow}>{runBusy ? "Working…" : workflowRuns.length ? "Run Again with Current Inputs" : "Create First Run"}</button>
-        <button type="button" className="secondaryButton" disabled={runBusy || workflowRuns.length < 2} onClick={compareLatestRuns}>Compare Latest Two</button>
+        <button type="button" className="secondaryButton" disabled={runBusy || !previousRunId || !currentRunId || previousRunId === currentRunId} onClick={compareSelectedRuns}>Compare Runs</button>
       </div>
       {runHistoryError && <p className="error" role="alert">{runHistoryError}</p>}
       <div className="runWorkspace">
-        <div><h3>Run history</h3>{workflowRuns.length ? <ol className="runHistory">{workflowRuns.map((run, index) => <li key={run.run_id}>
+        <div><h3>Run history</h3>{workflowRuns.length ? <ol className="runHistory">{workflowRuns.map((run, index) => <li id={`run-${run.run_id}`} key={run.run_id}>
           <div><strong>Run #{workflowRuns.length - index}</strong><span>{new Date(run.started_at).toLocaleString()}</span></div>
           <span className={`pill ${run.verification?.status ?? run.status}`}>{run.verification?.status?.replaceAll("_", " ") ?? run.status}</span>
           <p>{run.input_snapshots.map((item) => `${item.identity}${item.row_count === undefined ? "" : ` · ${item.row_count} rows`}`).join("; ") || "No dataset snapshot"}</p>
           <small>{run.warnings.length} warnings · {run.facts.length} deterministic facts · {run.artifacts.length} artifacts</small>
+          <div className="runLifecycle" aria-label={`Run ${workflowRuns.length - index} lifecycle`}>{run.lifecycle.map((event) => <span className={event.state} key={`${run.run_id}-${event.state}-${event.occurred_at}`}>{event.state.replaceAll("_", " ")}</span>)}</div>
           {run.error && <p className="error">{run.error}</p>}
           {run.drift_findings.map((finding) => <p className="warningText" key={`${run.run_id}-${finding.kind}`}>{finding.kind} drift: {finding.explanation}</p>)}
           {run.artifacts.map((artifact) => artifact.download_url && <a key={artifact.artifact_id} href={`${API}${artifact.download_url}`}>Download {artifact.filename ?? "artifact"}</a>)}
         </li>)}</ol> : <p className="muted">Run the saved workflow to create its first immutable history entry.</p>}</div>
-        <div><h3>What changed?</h3>{runComparison ? <div className="changeList">
+        <div><h3>What changed?</h3>
+          {workflowRuns.filter((run) => run.status === "completed").length >= 2 && <div className="compareControls">
+            <label>Previous run<select value={previousRunId} onChange={(event) => { setPreviousRunId(event.target.value); setRunComparison(null); }}>{workflowRuns.filter((run) => run.status === "completed").map((run, index) => <option value={run.run_id} key={run.run_id}>Run #{workflowRuns.length - index} · {new Date(run.started_at).toLocaleDateString()}</option>)}</select></label>
+            <span aria-hidden="true">→</span>
+            <label>Current run<select value={currentRunId} onChange={(event) => { setCurrentRunId(event.target.value); setRunComparison(null); }}>{workflowRuns.filter((run) => run.status === "completed").map((run, index) => <option value={run.run_id} key={run.run_id}>Run #{workflowRuns.length - index} · {new Date(run.started_at).toLocaleDateString()}</option>)}</select></label>
+            <button type="button" className="secondaryButton" disabled={runBusy || !previousRunId || !currentRunId || previousRunId === currentRunId} onClick={compareSelectedRuns}>Show observed changes</button>
+          </div>}
+          {runComparison ? <div className="changeList">
           <p className="observedLabel">Observed change · deterministic, not causal interpretation</p>
+          <div className="comparisonProvenance"><a href={`#run-${runComparison.previous_run_id}`}>Previous · {comparisonPrevious ? new Date(comparisonPrevious.started_at).toLocaleString() : runComparison.previous_run_id}</a><span>compared with</span><a href={`#run-${runComparison.current_run_id}`}>Current · {comparisonCurrent ? new Date(comparisonCurrent.started_at).toLocaleString() : runComparison.current_run_id}</a></div>
+          {changedMetrics.length > 0 && <div className="deltaCards" aria-label="Key deterministic changes">{changedMetrics.slice(0, 4).map((item) => <article key={`delta-${item.fact_id}`}>
+            <span>{item.label}</span><strong>{item.percent_change == null ? (item.absolute_change == null ? "Unavailable" : formatSigned(item.absolute_change)) : `${formatSigned(item.percent_change)}%`}</strong>
+            <div className="comparisonBars" aria-label={`${item.label}: ${formatRunValue(item.previous?.value ?? 0, item.unit)} before, ${formatRunValue(item.current?.value ?? 0, item.unit)} current`}><i style={{ width: `${comparisonBarWidth(item.previous?.value, item.previous?.value, item.current?.value)}%` }} /><i style={{ width: `${comparisonBarWidth(item.current?.value, item.previous?.value, item.current?.value)}%` }} /></div>
+            <small>{formatRunValue(item.previous?.value ?? 0, item.unit)} → {formatRunValue(item.current?.value ?? 0, item.unit)}</small>
+          </article>)}</div>}
           <h4>Business metrics</h4>
           {runComparison.metrics.filter((item) => item.status !== "unchanged").map((item) => <article key={item.fact_id}>
             <div><strong>{item.label}</strong><span className={`changeStatus ${item.status}`}>{item.status}</span></div>
@@ -659,7 +692,7 @@ export default function WorkspacePage() {
           <article><div><strong>Verification</strong></div><p>{runComparison.verification_previous?.status?.replaceAll("_", " ") ?? "not recorded"} → {runComparison.verification_current?.status?.replaceAll("_", " ") ?? "not recorded"}</p></article>
           <article><div><strong>Artifacts</strong></div><p>{runComparison.artifact_count_previous} → {runComparison.artifact_count_current}</p></article>
           {runComparison.steps.map((item) => <article key={item.step}><div><strong>{item.step}. {item.tool_name}</strong><span>{item.previous_status ?? "unavailable"} → {item.current_status ?? "unavailable"}</span></div><small>Warnings {formatSigned(item.warning_change)} · artifacts {formatSigned(item.artifact_change)}</small></article>)}
-        </div> : <p className="muted">Create two completed runs, then compare their saved facts and source snapshots. Undefined percentages remain undefined.</p>}</div>
+        </div> : <p className="muted">Select two completed runs to compare their saved facts and source snapshots. Undefined percentages remain undefined.</p>}</div>
       </div>
     </section>}
   </main>;
@@ -673,6 +706,12 @@ function formatRunValue(value: number, unit?: string | null): string {
 function formatSigned(value: number): string {
   const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Math.abs(value));
   return `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatted}`;
+}
+
+function comparisonBarWidth(value?: number, previous?: number, current?: number): number {
+  if (value === undefined) return 0;
+  const scale = Math.max(Math.abs(previous ?? 0), Math.abs(current ?? 0), 1);
+  return Math.max(3, Math.round((Math.abs(value) / scale) * 100));
 }
 
 function canonicalTemplatePlan(proposal: TemplateProposal | null): TemplatePlan | null {

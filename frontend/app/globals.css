@@ -96,6 +96,11 @@ h2 { margin:0; font-size:.95rem; letter-spacing:.02em; }
 .provenanceList span { color:var(--muted); font-size:.82rem; overflow-wrap:anywhere; }
 .workflowRunsPanel { margin-top:16px; }
 .workflowRunsPanel .panelTitle>div h2 { margin-top:5px; font-size:1.15rem; }
+.workflowOverview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:16px; }
+.workflowOverview article { display:flex; flex-direction:column; gap:4px; min-width:0; padding:12px; border:1px solid var(--line); border-radius:10px; background:#fbfcf9; }
+.workflowOverview article span { color:var(--muted); font-size:.68rem; font-weight:750; letter-spacing:.06em; text-transform:uppercase; }
+.workflowOverview article strong { overflow-wrap:anywhere; text-transform:capitalize; }
+.workflowOverview article small { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .workflowActions { display:grid; grid-template-columns:1fr auto auto; gap:12px; align-items:center; padding:16px 0; }
 .workflowActions p { margin:5px 0 0; color:var(--muted); font-size:.84rem; line-height:1.45; }
 .workflowActions button { margin:0; }
@@ -108,9 +113,28 @@ h2 { margin:0; font-size:.95rem; letter-spacing:.02em; }
 .runHistory li>div span,.runHistory li small { color:var(--muted); font-size:.75rem; }
 .runHistory li p,.runHistory li a { grid-column:1/-1; margin:0; font-size:.82rem; line-height:1.4; }
 .runHistory li a { color:var(--green); font-weight:700; }
+.runLifecycle { grid-column:1/-1; display:flex !important; flex-flow:row wrap !important; gap:5px !important; }
+.runLifecycle span { padding:3px 7px; border-radius:999px; background:#e9efea; color:#435149 !important; font-size:.62rem !important; font-weight:700; letter-spacing:.03em; text-transform:uppercase; }
+.runLifecycle span.succeeded { color:var(--green) !important; background:#e0f3e8; }
+.runLifecycle span.failed,.runLifecycle span.blocked { color:var(--red) !important; background:#fae8e5; }
+.compareControls { display:grid; grid-template-columns:1fr auto 1fr; gap:8px; align-items:end; margin-bottom:12px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#fbfcf9; }
+.compareControls label { display:flex; flex-direction:column; gap:5px; color:var(--muted); font-size:.72rem; font-weight:700; }
+.compareControls select { width:100%; padding:8px; border:1px solid #bfc8c1; border-radius:8px; background:white; color:var(--ink); font:inherit; }
+.compareControls>span { align-self:center; color:var(--muted); }
+.compareControls button { grid-column:1/-1; width:100%; margin:0; }
 .changeList { display:grid; gap:8px; }
 .changeList h4 { margin:10px 0 0; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; }
 .observedLabel { margin:0 0 3px; padding:9px 11px; color:#355c4b; background:#f0faf4; border-left:3px solid var(--green); font-size:.78rem; font-weight:700; }
+.comparisonProvenance { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:.7rem; }
+.comparisonProvenance a { color:var(--green); font-weight:700; }
+.comparisonProvenance span { color:var(--muted); }
+.deltaCards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.deltaCards article { display:flex; flex-direction:column; gap:5px; background:#fbfcf9; }
+.deltaCards article>span { color:var(--muted); font-size:.7rem; font-weight:700; }
+.deltaCards article>strong { color:var(--green); font-size:1.25rem; }
+.comparisonBars { display:grid !important; grid-template-rows:repeat(2,4px); gap:3px !important; }
+.comparisonBars i { display:block; min-width:3px; border-radius:999px; background:#aebbb3; }
+.comparisonBars i:last-child { background:var(--green); }
 .changeList article { padding:11px 12px; border:1px solid var(--line); border-radius:9px; }
 .changeList article>div { display:flex; justify-content:space-between; gap:12px; }
 .changeList article p { margin:5px 0; color:var(--ink); }
@@ -125,4 +149,4 @@ h2 { margin:0; font-size:.95rem; letter-spacing:.02em; }
 .sourceNote { color:var(--muted); font-size:.82rem; line-height:1.45; }
 select:focus-visible, a:focus-visible, summary:focus-visible { outline:3px solid rgba(23,108,76,.4); outline-offset:3px; }
 @media (prefers-reduced-motion:reduce) { .progress span { animation:none; } }
-@media (max-width:720px) { main { width:min(100% - 24px,1180px); padding-top:30px; } header { display:block; } header .status { display:inline-block; margin-top:10px; } .uploads,.results,.promise,.runWorkspace,.workflowActions { grid-template-columns:1fr; } .answer { grid-column:auto; } .composer,.panel { padding:18px; } .mappingRow { grid-template-columns:1fr auto; } .mappingRow>span:first-of-type { grid-column:1/-1; } .clarificationGrid label { grid-template-columns:1fr; } .clarificationGrid small { grid-column:1; } }
+@media (max-width:720px) { main { width:min(100% - 24px,1180px); padding-top:30px; } header { display:block; } header .status { display:inline-block; margin-top:10px; } .uploads,.results,.promise,.runWorkspace,.workflowActions,.workflowOverview,.deltaCards { grid-template-columns:1fr; } .answer { grid-column:auto; } .composer,.panel { padding:18px; } .mappingRow { grid-template-columns:1fr auto; } .mappingRow>span:first-of-type { grid-column:1/-1; } .clarificationGrid label { grid-template-columns:1fr; } .clarificationGrid small { grid-column:1; } }
