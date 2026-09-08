@@ -88,6 +88,12 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
         assert restarted_service.get(workflow.workflow_id) == workflow
         workflow_run = restarted_service.rerun(workflow.workflow_id, {})
         assert workflow_run.status == "completed"
+        persisted_run = workflow_repository.get_run(workflow_run.run_id)
+        persisted_history = workflow_repository.list_runs(workflow.workflow_id, 10, 0)
+        assert persisted_run is not None
+        assert persisted_run.definition_fingerprint == workflow_run.definition_fingerprint
+        assert persisted_run.input_snapshots[0].row_count == 2
+        assert persisted_history[0].run_id == workflow_run.run_id
         artifact_repository.save(artifact)
         assert PostgresArtifactRepository(
             database_url, LocalArtifactStore(tmp_path)

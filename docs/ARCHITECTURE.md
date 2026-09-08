@@ -28,11 +28,11 @@ All layers in the diagram have initial implementations. Local live database/prov
 
 ### Frontend
 
-Provide a thin interaction layer for goals, user confirmations, progress, evidence, traces, and artifact downloads. A thin internal UI is planned before a production Next.js UI.
+Provide a thin interaction layer for goals, user confirmations, progress, evidence, traces, artifact downloads, saved-workflow reruns, immutable run history, and deterministic run comparison.
 
 ### API Layer
 
-FastAPI is the implemented API boundary for health checks, typed structured-data operations, PDF ingestion, and evidence retrieval. Authentication, authorization, job interaction, and persistent artifact access remain future work.
+FastAPI is the implemented API boundary for health checks, typed structured-data operations, PDF ingestion, evidence retrieval, workflows, workflow runs, and run comparison. Run execution remains synchronous, but stored lifecycle events make terminal success, blocked validation, and failure explicit. Authentication, authorization, and asynchronous job control remain future work.
 
 ### Orchestrator
 
@@ -64,7 +64,7 @@ Verification checks declared numeric claims against deterministic outputs and do
 
 Alembic owns the production schema; application startup never creates tables or extensions. The PostgreSQL retrieval repository stores document metadata, page-scoped chunks, vector-space metadata, and pgvector embeddings. Search uses exact cosine distance (`<=>`) and returns cosine similarity as `1 - distance`, with parameterized provider/model/dimension predicates, optional document filtering, and deterministic ID tie-breaking. Exact search was chosen to avoid approximate-recall loss before corpus size and latency justify HNSW.
 
-PostgreSQL also stores workflows, immutable workflow-version recipes, rerun records, artifact metadata, and structured execution/tool provenance. Workflow repositories survive process restart. Artifact bodies are stored under UUID-derived keys inside one configured local root; metadata includes media/type, dimensions, producing task/workflow/run references where available, verification status, byte size, and SHA-256. Bodies are integrity-checked on read and are not stored in PostgreSQL. Uploaded PDFs remain represented by extracted chunks rather than retained source files. Demo repositories remain process-local by design.
+PostgreSQL also stores workflows, immutable workflow-version recipes, immutable run records, artifact metadata, and structured execution/tool provenance. Each new run stores a definition fingerprint, terminal lifecycle, safe source snapshots, deterministic comparison facts, warnings, drift findings, artifacts, and verification summary; raw secret values are rejected before persistence. Workflow repositories survive process restart. Artifact bodies are stored under UUID-derived keys inside one configured local root; metadata includes media/type, dimensions, producing task/workflow/run references where available, verification status, byte size, and SHA-256. Bodies are integrity-checked on read and are not stored in PostgreSQL. Uploaded PDFs remain represented by extracted chunks rather than retained source files. Demo repositories remain process-local by design.
 
 ### Artifacts and Trace
 
@@ -73,6 +73,8 @@ CSV/XLSX and management workbooks are generated in memory with IDs, shape, produ
 Executions expose structured stages for goal, bounded plan, resource inspection, evidence retrieval, deterministic report phases, verification, and completion. Each stage carries only concise execution facts such as tool name, status, row counts, diagnostics, evidence IDs, verification result, and artifact IDs. Successful north-star runs save a one-step deterministic sales recipe with expected schemas for all nested dataset inputs; compatible resources can replace them on rerun, while missing or reordered columns fail as schema drift before calculation.
 
 Successful template transforms save a one-step `template.transform` recipe through the existing workflow repository. The recipe includes source roles/order, confirmed mappings, joins, derivations, required/unique fields, expected source schemas, template structure fingerprint, and pinned policy evidence. Reruns may replace only sources and the target; mappings, rules, and evidence cannot be overridden. Task-scoped agent tools expose `template.propose` and `template.execute` without placing file bodies in model-visible arguments.
+
+Workflow history APIs list workflows and bounded newest-first runs, return a safe run record, execute a stored workflow, and compare two completed runs. Comparison is deterministic over step-scoped facts and snapshots; every compared value points to its source run/workflow version. Task-scoped `workflow.list_runs`, `workflow.get_run`, and `workflow.compare_runs` tools accept only runs belonging to workflow IDs already bound to the task and return metadata rather than stored dataset bodies.
 
 ### Readiness and Failure Behavior
 

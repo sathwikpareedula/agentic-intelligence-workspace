@@ -27,7 +27,7 @@ type Execution = {
   artifacts: Artifact[];
   stages: ExecutionStage[];
   warnings: string[];
-  saved_workflow?: { workflow_id: string; name: string; version: number; rerun_url: string };
+  saved_workflow?: SavedWorkflow;
   verification?: { status: string; findings: { claim: string; status: string; explanation: string }[] };
 };
 type DocumentResult = { document_id: string; filename: string; page_count: number; chunk_count: number };
@@ -54,7 +54,7 @@ type TemplateResult = {
   provenance: { target_field: string; source_fields: string[]; transformation: string; policy_evidence_ids: string[]; validation: string }[];
   clarifications: { target_field: string; reason: string }[];
   artifact?: Artifact;
-  saved_workflow?: { workflow_id: string; name: string; version: number; rerun_url: string };
+  saved_workflow?: SavedWorkflow;
 };
 type AnalyticsResult = {
   status: string;
@@ -65,6 +65,36 @@ type AnalyticsResult = {
   rows: Record<string, string | number | boolean | null>[];
   row_count: number;
   plan: Record<string, unknown>;
+};
+type SavedWorkflow = { workflow_id: string; name: string; version: number; rerun_url: string };
+type WorkflowRun = {
+  run_id: string;
+  workflow_id: string;
+  version: number;
+  status: "completed" | "failed";
+  started_at: string;
+  completed_at: string;
+  error?: string;
+  lifecycle: { state: string; occurred_at: string }[];
+  input_snapshots: { input_key: string; identity: string; row_count?: number; fingerprint: string; schema_fingerprint?: string; missing_value_count?: number; duplicate_row_count?: number }[];
+  facts: { fact_id: string; label: string; metric: string; value: number; unit?: string; grouping: Record<string, string | number | boolean | null> }[];
+  artifacts: { artifact_id: string; filename?: string; download_url?: string; row_count?: number }[];
+  warnings: string[];
+  drift_findings: { kind: string; status: string; explanation: string }[];
+  verification?: { status: string; fact_count: number; warning_count: number };
+};
+type RunComparison = {
+  previous_run_id: string;
+  current_run_id: string;
+  metrics: { fact_id: string; label: string; metric: string; unit?: string | null; grouping: Record<string, string | number | boolean | null>; status: string; previous?: { value: number } | null; current?: { value: number } | null; absolute_change?: number | null; percent_change?: number | null; percent_change_reason?: string | null }[];
+  row_counts: { input_key: string; identity_previous?: string | null; identity_current?: string | null; previous?: number | null; current?: number | null; absolute_change?: number | null; percent_change?: number | null; percent_change_reason?: string | null }[];
+  snapshots: { input_key: string; status: string; explanation: string }[];
+  warnings: { warning: string; previous_count: number; current_count: number; change: number }[];
+  verification_previous?: { status: string };
+  verification_current?: { status: string };
+  artifact_count_previous: number;
+  artifact_count_current: number;
+  observed_only: true;
 };
 const SHORTFALL_PLAN = {
   analysis: "target_variance",
@@ -147,6 +177,11 @@ export default function WorkspacePage() {
   const [pgTable, setPgTable] = useState("orders");
   const [restUrl, setRestUrl] = useState("");
   const [restSecretRef, setRestSecretRef] = useState("REST_BEARER_TOKEN");
+  const [workflowRuns, setWorkflowRuns] = useState<WorkflowRun[]>([]);
+  const [runComparison, setRunComparison] = useState<RunComparison | null>(null);
+  const [runHistoryError, setRunHistoryError] = useState<string | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const activeWorkflow = execution?.saved_workflow ?? templateResult?.saved_workflow ?? null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -159,6 +194,27 @@ export default function WorkspacePage() {
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!activeWorkflow) {
+      setWorkflowRuns([]);
+      setRunComparison(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`${API}/workflows/${activeWorkflow.workflow_id}/runs?limit=20`, { cache: "no-store", signal: controller.signal })
+      .then((response) => apiJson<{ runs: WorkflowRun[] }>(response))
+      .then((result) => {
+        setWorkflowRuns(result.runs);
+        setRunComparison(null);
+        setRunHistoryError(null);
+      })
+      .catch((caught: unknown) => {
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        setRunHistoryError(caught instanceof Error ? caught.message : "Run history is unavailable.");
+      });
+    return () => controller.abort();
+  }, [activeWorkflow?.workflow_id]);
 
   async function uploadDataset(file: File) {
     setPhase("Inspecting structured data");
@@ -351,6 +407,86 @@ export default function WorkspacePage() {
     }
   }
 
+  async function loadWorkflowRuns(workflowId: string): Promise<WorkflowRun[]> {
+    const result = await apiJson<{ runs: WorkflowRun[] }>(
+      await fetch(`${API}/workflows/${workflowId}/runs?limit=20`, { cache: "no-store" }),
+    );
+    setWorkflowRuns(result.runs);
+    return result.runs;
+  }
+
+  async function currentStepOverrides(): Promise<Record<string, Record<string, unknown>>> {
+    if (demo === "sales" && dataset && customers && targets) {
+      const [transactionsContent, customersContent, targetsContent] = await Promise.all([
+        fileToBase64(dataset), fileToBase64(customers), fileToBase64(targets),
+      ]);
+      return {
+        "1": {
+          transactions: { filename: dataset.name, content_base64: transactionsContent },
+          customers: { filename: customers.name, content_base64: customersContent },
+          targets: { filename: targets.name, content_base64: targetsContent },
+        },
+      };
+    }
+    if (demo === "template" && dataset && customers && templateTarget && templateProposal) {
+      const [ordersContent, customersContent, targetContent] = await Promise.all([
+        fileToBase64(dataset), fileToBase64(customers), fileToBase64(templateTarget),
+      ]);
+      const roles = templateProposal.sources.map((source) => source.role);
+      return {
+        "1": {
+          sources: [
+            { role: roles[0] ?? "orders", filename: dataset.name, content_base64: ordersContent },
+            { role: roles[1] ?? "customers", filename: customers.name, content_base64: customersContent },
+          ],
+          target: { filename: templateTarget.name, content_base64: targetContent },
+        },
+      };
+    }
+    return {};
+  }
+
+  async function runSavedWorkflow() {
+    if (!activeWorkflow || runBusy) return;
+    setRunBusy(true);
+    setRunHistoryError(null);
+    setRunComparison(null);
+    try {
+      const stepOverrides = await currentStepOverrides();
+      await apiJson<WorkflowRun>(await fetch(`${API}/workflows/${activeWorkflow.workflow_id}/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ step_overrides: stepOverrides }),
+      }));
+      await loadWorkflowRuns(activeWorkflow.workflow_id);
+    } catch (caught) {
+      setRunHistoryError(caught instanceof Error ? caught.message : "Workflow rerun failed.");
+    } finally {
+      setRunBusy(false);
+    }
+  }
+
+  async function compareLatestRuns() {
+    if (workflowRuns.length < 2 || runBusy) return;
+    setRunBusy(true);
+    setRunHistoryError(null);
+    try {
+      const result = await apiJson<RunComparison>(await fetch(`${API}/workflow-runs/compare`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          previous_run_id: workflowRuns[1].run_id,
+          current_run_id: workflowRuns[0].run_id,
+        }),
+      }));
+      setRunComparison(result);
+    } catch (caught) {
+      setRunHistoryError(caught instanceof Error ? caught.message : "Run comparison failed.");
+    } finally {
+      setRunBusy(false);
+    }
+  }
+
   const selectedTemplatePlan = canonicalTemplatePlan(templateProposal);
   const derivedTargets = new Set(selectedTemplatePlan?.derivations.map((item) => item.target_field) ?? []);
   const unresolvedTemplateFields = templateProposal?.clarifications.filter((item) => !derivedTargets.has(item.target_field)) ?? [];
@@ -479,7 +615,50 @@ export default function WorkspacePage() {
       <section className="panel tracePanel"><div className="panelTitle"><h2>Execution trace</h2><span>{execution?.stages.length ?? 0} stages</span></div><ol className="trace">{execution?.stages.map((stage, index) => <li key={`${stage.name}-${index}`}><span className={`dot ${stage.status === "completed" ? "ok" : stage.status === "warning" ? "warn" : "fail"}`} /><div><div className="stageTitle"><strong>{stage.name}</strong><span>{stage.status}</span></div><p>{stage.explanation}</p>{Object.keys(stage.row_counts).length > 0 && <div className="facts">{Object.entries(stage.row_counts).map(([label, value]) => <small key={label}>{label.replaceAll("_", " ")}: {value}</small>)}</div>}<small>{stage.tool_name ? `${stage.tool_name} · ` : ""}{stage.evidence_ids.length} evidence · {stage.artifact_ids.length} artifacts{stage.verification_result ? ` · ${stage.verification_result.replaceAll("_", " ")}` : ""}</small></div></li>) ?? <li className="empty">Goal, plan, tool outcomes, evidence, verification, and artifacts will appear here.</li>}</ol>{execution && <details className="technicalTrace"><summary>Inspect validated tool calls</summary>{execution.trace.map((step) => <article key={step.step}><strong>{step.step}. {step.requested_tool}</strong><span>{step.duration_ms.toFixed(1)} ms</span><p>{step.observation}</p></article>)}</details>}</section>
       <section className="panel"><div className="panelTitle"><h2>Evidence & verification</h2><span>{execution?.citations.length ?? 0} citations</span></div>{execution?.warnings.length ? <div className="warnings"><strong>Data and join warnings</strong>{execution.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}{execution?.citations.map((citation) => <article className="citation" key={citation.chunk_id}><strong>{citation.filename} · page {citation.page_number}</strong><code>{citation.chunk_id}</code></article>)}{execution?.verification?.findings.map((finding, index) => <article className="finding" key={`${finding.claim}-${index}`}><span className={`pill ${finding.status}`}>{finding.status.replaceAll("_", " ")}</span><strong>{finding.claim}</strong><p>{finding.explanation}</p></article>) ?? <p className="muted">Source pages and claim checks will appear after execution.</p>}</section>
     </div>}
+    {activeWorkflow && <section className="panel workflowRunsPanel">
+      <div className="panelTitle"><div><span className="eyebrow">REUSABLE WORKFLOW</span><h2>{activeWorkflow.name}</h2></div><span className={`pill ${workflowRuns[0]?.verification?.status ?? workflowRuns[0]?.status ?? "idle"}`}>{workflowRuns[0]?.verification?.status?.replaceAll("_", " ") ?? (workflowRuns.length ? workflowRuns[0].status : "No runs yet")}</span></div>
+      <div className="workflowActions">
+        <div><strong>Version {activeWorkflow.version}</strong><p>Each execution is saved as an immutable run with input fingerprints, schema, facts, warnings, and artifacts.</p></div>
+        <button type="button" disabled={runBusy} onClick={runSavedWorkflow}>{runBusy ? "Working…" : workflowRuns.length ? "Run Again with Current Inputs" : "Create First Run"}</button>
+        <button type="button" className="secondaryButton" disabled={runBusy || workflowRuns.length < 2} onClick={compareLatestRuns}>Compare Latest Two</button>
+      </div>
+      {runHistoryError && <p className="error" role="alert">{runHistoryError}</p>}
+      <div className="runWorkspace">
+        <div><h3>Run history</h3>{workflowRuns.length ? <ol className="runHistory">{workflowRuns.map((run, index) => <li key={run.run_id}>
+          <div><strong>Run #{workflowRuns.length - index}</strong><span>{new Date(run.started_at).toLocaleString()}</span></div>
+          <span className={`pill ${run.verification?.status ?? run.status}`}>{run.verification?.status?.replaceAll("_", " ") ?? run.status}</span>
+          <p>{run.input_snapshots.map((item) => `${item.identity}${item.row_count === undefined ? "" : ` · ${item.row_count} rows`}`).join("; ") || "No dataset snapshot"}</p>
+          <small>{run.warnings.length} warnings · {run.facts.length} deterministic facts · {run.artifacts.length} artifacts</small>
+          {run.error && <p className="error">{run.error}</p>}
+          {run.drift_findings.map((finding) => <p className="warningText" key={`${run.run_id}-${finding.kind}`}>{finding.kind} drift: {finding.explanation}</p>)}
+          {run.artifacts.map((artifact) => artifact.download_url && <a key={artifact.artifact_id} href={`${API}${artifact.download_url}`}>Download {artifact.filename ?? "artifact"}</a>)}
+        </li>)}</ol> : <p className="muted">Run the saved workflow to create its first immutable history entry.</p>}</div>
+        <div><h3>What changed?</h3>{runComparison ? <div className="changeList">
+          <p className="observedLabel">Observed change · deterministic, not causal interpretation</p>
+          {runComparison.metrics.filter((item) => item.status !== "unchanged").map((item) => <article key={item.fact_id}>
+            <div><strong>{item.label}</strong><span className={`changeStatus ${item.status}`}>{item.status}</span></div>
+            <p>{item.previous ? formatRunValue(item.previous.value, item.unit) : "Unavailable"} → {item.current ? formatRunValue(item.current.value, item.unit) : "Unavailable"}</p>
+            <small>{item.absolute_change == null ? item.percent_change_reason : `${formatSigned(item.absolute_change)}${item.percent_change == null ? ` · ${item.percent_change_reason}` : ` · ${formatSigned(item.percent_change)}%`}`}</small>
+          </article>)}
+          {runComparison.row_counts.map((item) => <article key={item.input_key}><div><strong>Rows · {item.identity_current ?? item.identity_previous}</strong></div><p>{item.previous ?? "Unavailable"} → {item.current ?? "Unavailable"}</p><small>{item.absolute_change == null ? item.percent_change_reason : formatSigned(item.absolute_change)}</small></article>)}
+          {runComparison.snapshots.filter((item) => item.status !== "unchanged").map((item) => <article key={item.input_key}><div><strong>Source / schema</strong><span className={`changeStatus ${item.status}`}>{item.status.replaceAll("_", " ")}</span></div><p>{item.explanation}</p></article>)}
+          {runComparison.warnings.map((item) => <article key={item.warning}><div><strong>Warning</strong><span>{formatSigned(item.change)}</span></div><p>{item.warning}</p></article>)}
+          <article><div><strong>Verification</strong></div><p>{runComparison.verification_previous?.status?.replaceAll("_", " ") ?? "not recorded"} → {runComparison.verification_current?.status?.replaceAll("_", " ") ?? "not recorded"}</p></article>
+          <article><div><strong>Artifacts</strong></div><p>{runComparison.artifact_count_previous} → {runComparison.artifact_count_current}</p></article>
+        </div> : <p className="muted">Create two completed runs, then compare their saved facts and source snapshots. Undefined percentages remain undefined.</p>}</div>
+      </div>
+    </section>}
   </main>;
+}
+
+function formatRunValue(value: number, unit?: string | null): string {
+  const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+  return unit === "percent" ? `${formatted}%` : formatted;
+}
+
+function formatSigned(value: number): string {
+  const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Math.abs(value));
+  return `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatted}`;
 }
 
 function canonicalTemplatePlan(proposal: TemplateProposal | null): TemplatePlan | null {

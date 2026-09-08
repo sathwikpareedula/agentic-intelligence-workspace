@@ -30,6 +30,7 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add Transform-to-Template V1 with typed target/source inspection, deterministic mapping proposals, explicit ambiguity/missing/type states, safe joins/derivations, exact CSV/XLSX output, reopen validation, provenance, reusable drift-checked workflows, task-scoped agent tools, a focused UI, canonical fixtures, and an 18-case controlled evaluation.
 - [x] Add bounded JSON/Parquet/TXT adapters and read-only PostgreSQL plus GET-only REST connectors with SSRF/SQL safety, secret references, provenance, task-scoped tools, and a dedicated evaluation family.
 - [x] Add typed analytical plans, deterministic pandas analytics, validated read-only SQL reuse, numeric facts grounded in the existing verifier, task-scoped tools, a focused UI, and a dedicated analytics evaluation family.
+- [x] Add immutable workflow-run lifecycle/history, input and schema fingerprints, persisted facts/verification/artifacts, bounded APIs and task-scoped tools, and deterministic “What Changed?” comparisons with a controlled two-period evaluation.
 - Measure correctness, failure behavior, performance, and cost where applicable.
 
 ### Milestone 2 — Retrieval and knowledge foundation
@@ -53,6 +54,7 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Implement the mixed grades/PDF calculation with citations and deterministic arithmetic.
 - [x] Add numeric/citation verification and conflict/failure/insufficiency states.
 - [x] Add versioned recipes with reruns, validation, and schema-drift detection.
+- [x] Distinguish immutable workflow definitions from run records and expose run history, blocked/failure diagnostics, compatible-input reruns, and provenance-linked comparison.
 - [x] Add artifact provenance, management XLSX generation, and the known-ground-truth August sales flow.
 - [x] Add a functional Next.js workspace foundation and local TypeScript verification.
 - [x] Add Docker definitions, service composition, CI, request IDs/logging, CORS, and readiness.

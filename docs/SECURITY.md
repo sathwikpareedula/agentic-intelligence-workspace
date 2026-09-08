@@ -73,6 +73,7 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - Production agent tools are created per task and accept only bound dataset filenames, document IDs, and workflow IDs. Uploaded dataset bodies remain server-side and are not placed in model prompts or traces.
 - Task-scoped template tools require prior inspection of every selected resource. Saved template recipes pin mappings, transformation rules, and policy evidence; reruns can replace only source/template payloads and fail on role, schema, or structural template drift.
 - External PostgreSQL and REST tools accept secret *references* (environment variable names), never raw passwords or tokens. Workflow recipes persist host/database/table or sanitized URL plus secret-ref names. REST blocks loopback/private/metadata targets unless `ALLOW_PRIVATE_REST_TARGETS=1`. Agent tools can only use sources bound to the task.
+- Workflow history tools may read or compare only runs whose workflow ID is bound to the current task. Their model-visible responses exclude stored observation payloads and uploaded bodies.
 
 ### Malicious Documents
 
@@ -93,6 +94,8 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - Retrieval joins chunk citations back to authoritative document rows and filters provider/model/dimension metadata, preventing filename drift and incompatible vector-space mixing. Document filtering is a bound UUID predicate.
 - Artifact paths are never derived from uploaded filenames. Bodies use server-generated UUID keys constrained to one resolved root, metadata is parameterized, and byte count plus SHA-256 are checked on read.
 - Execution records store typed tool traces, statuses, source/artifact references, and verification output. They do not store hidden model reasoning or chain-of-thought.
+- Workflow-run snapshots contain source identities, content/configuration hashes, schema/type hashes, compact quality counts, secret-reference names where applicable, and artifact/fact references. They never resolve or store raw secret values. Definition fingerprints and immutable version rows prevent later recipe changes from rewriting the meaning of old runs.
+- Run comparison accepts only completed runs of the same workflow and matches step-scoped fact identities plus units/grouping/calculation semantics. Missing and zero-denominator values remain explicit, and non-finite or ambiguous facts fail closed.
 - Current limitations: no tenant/owner column or authorization boundary, no retention/deletion policy, no encryption policy beyond the database/filesystem deployment, no database connection pool, and workflow recipes may contain submitted tool arguments. Production deployment remains blocked on those controls for sensitive multi-user data.
 
 ### Rate Limiting

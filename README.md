@@ -22,6 +22,7 @@ This project turns natural-language goals over structured data and unstructured 
 - A deterministic Transform-to-Template workflow for CSV/XLSX targets with structural inspection, evidence-ranked mappings, first-class clarification states, guarded joins and derivations, policy-grounded rates, exact template writing, reopen validation, field provenance, and drift-checked reruns.
 - Bounded JSON/Parquet dataset adapters, UTF-8 text document ingestion through the existing retriever, a read-only external PostgreSQL connector, and a GET-only REST JSON connector with SSRF protections and secret references.
 - Typed deterministic analytics over workspace datasets, with named numeric facts, existing-verifier grounding, optional validated read-only SQL against external PostgreSQL, and a focused analytics UI. DuckDB is not used.
+- Immutable workflow-run history with lifecycle, safe input/source snapshots, schema/type drift findings, verification summaries, artifacts, and deterministic same-workflow “What Changed?” comparisons.
 
 ## Quick start
 
@@ -68,6 +69,7 @@ cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.template_transform ..\evals\template_transform_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.sources ..\evals\source_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.analytics ..\evals\analytics_cases.json
+.\.venv\Scripts\python.exe -m app.evaluation.workflow_runs ..\evals\workflow_run_cases.json
 ```
 
 All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. Source and analytics evaluations exercise the bounded connector and typed-computation contracts. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database unless the source evaluator receives an explicit isolated `TEST_DATABASE_URL`.
@@ -77,6 +79,8 @@ The Transform-to-Template evaluation covers all 18 controlled cases from exact a
 ## Demonstrations
 
 `sample_data/grades.csv` and `sample_data/syllabus.pdf` exercise cited policy evidence plus deterministic weighted-grade calculation. The August sales files and `commission_policy.pdf` exercise cleaning, join diagnostics, targets, underperformance, deterministic commissions, verification, a management workbook, and a saved/rerunnable recipe. Tests contain the executable end-to-end paths and fixed expected outputs.
+
+`sample_data/analytics_sales.csv` and `sample_data/analytics_sales_september.csv` are compatible period inputs for the workflow-run evaluator. It saves one typed grouped-sales workflow, records separate August and September runs, and compares exact metric, group, row-count, schema, verification, warning, and artifact changes. The browser’s saved-workflow panel can create runs from the currently selected inputs, list immutable history, and compare the latest two completed runs. Comparisons report observations only; they do not invent business causes.
 
 ### Recruiter north-star: August sales management report
 

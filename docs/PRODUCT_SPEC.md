@@ -66,6 +66,12 @@ The workspace can inspect/import JSON (array of objects or one clearly selected 
 
 Users can run typed analytical plans over workspace datasets: filters, grouping, aggregations, ranking, rolling averages, percent change, correlation, distribution summaries, and target/actual variance. Calculations are pandas-only. Optional SQL against an approved external PostgreSQL source is the same single validated read-only SELECT used in Phase 2. Results are named numeric facts that the existing verifier can ground. This is not a dashboard/anomaly product.
 
+## Reusable Workflow Runs and Observed Change
+
+A workflow is an immutable versioned deterministic definition. Executing it creates a distinct immutable run with a workflow-definition fingerprint, lifecycle, safe input/source snapshots, row counts and schema/type fingerprints, warnings, verification summary, deterministic facts, artifact references, and failure/drift findings. Compatible replacement data is allowed only through the workflow’s existing override policy; source identity, secrets, mappings, and policy evidence remain pinned where required.
+
+Run history is newest-first and bounded. Deterministic comparison accepts two completed runs of the same workflow, matches facts by step-scoped semantic identity, and reports absolute/percentage changes, added/removed grouped facts, row-count and source/schema changes, verification/warning changes, and artifact availability. A missing metric is not zero, a zero prior value has no percentage change, and non-finite or meaning-shifted facts fail closed. These are observed changes, not causal explanations.
+
 ## Evidence-First Behavior
 
 The system must distinguish sourced facts, deterministic results, model interpretation, assumptions, and unknowns. It must not fabricate missing information. When evidence is insufficient, it should say so explicitly and identify what would be needed to continue. Outputs should be traceable to source material and tool results.

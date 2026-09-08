@@ -45,6 +45,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://agentic_intelligence_test:ci-only-password@localhost:5432/agentic_intelligence_test
       - run: python -m app.evaluation.analytics ../evals/analytics_cases.json
+      - run: python -m app.evaluation.workflow_runs ../evals/workflow_run_cases.json
   frontend:
     runs-on: ubuntu-latest
     defaults:

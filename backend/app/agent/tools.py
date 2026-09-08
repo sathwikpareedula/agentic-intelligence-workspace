@@ -177,6 +177,20 @@ class BoundWorkflowRunInput(ToolInput):
     step_overrides: dict[Annotated[int, Field(ge=1)], dict[str, Any]] = Field(default_factory=dict)
 
 
+class BoundWorkflowHistoryInput(ToolInput):
+    workflow_id: UUID
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class BoundWorkflowRunDetailInput(ToolInput):
+    run_id: UUID
+
+
+class BoundWorkflowCompareInput(ToolInput):
+    previous_run_id: UUID
+    current_run_id: UUID
+
+
 class BoundTemplateSource(ToolInput):
     role: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
     dataset: str = Field(min_length=1, max_length=255)
@@ -787,6 +801,17 @@ def general_task_tools(
         )
 
     if allowed_workflows and workflow_service is not None:
+        def require_bound_run(run_id: UUID):
+            from app.services.workflows import WorkflowRunNotFoundError
+
+            try:
+                run = workflow_service.get_run(run_id)
+            except WorkflowRunNotFoundError as exc:
+                raise ValueError("The requested workflow run is not bound to this task.") from exc
+            if run.workflow_id not in allowed_workflows:
+                raise ValueError("The requested workflow run is not bound to this task.")
+            return run
+
         def run_workflow(arguments: BoundWorkflowRunInput) -> ToolObservation:
             if arguments.workflow_id not in allowed_workflows:
                 raise ValueError("The requested workflow is not bound to this task.")
@@ -798,7 +823,7 @@ def general_task_tools(
                     if run.status == "completed"
                     else f"Workflow failed at step {run.failed_step}: {run.error}"
                 ),
-                result=run.model_dump(mode="json"),
+                result=_workflow_run_summary(run, include_facts=True),
                 error_code=None if run.status == "completed" else "workflow_failed",
                 artifact_ids=[
                     artifact_id
@@ -821,6 +846,59 @@ def general_task_tools(
             )
         )
 
+        def list_workflow_runs(arguments: BoundWorkflowHistoryInput) -> ToolObservation:
+            if arguments.workflow_id not in allowed_workflows:
+                raise ValueError("The requested workflow is not bound to this task.")
+            runs = workflow_service.list_runs(arguments.workflow_id, arguments.limit, 0)
+            return ToolObservation(
+                success=True,
+                summary=f"Listed {len(runs)} immutable runs for the bound workflow.",
+                result={"runs": [_workflow_run_summary(run, include_facts=False) for run in runs]},
+            )
+
+        def get_workflow_run(arguments: BoundWorkflowRunDetailInput) -> ToolObservation:
+            run = require_bound_run(arguments.run_id)
+            return ToolObservation(
+                success=True,
+                summary=f"Loaded workflow run {run.run_id}.",
+                result=_workflow_run_summary(run, include_facts=True),
+            )
+
+        def compare_workflow_runs(arguments: BoundWorkflowCompareInput) -> ToolObservation:
+            require_bound_run(arguments.previous_run_id)
+            require_bound_run(arguments.current_run_id)
+            comparison = workflow_service.compare_runs(
+                arguments.previous_run_id, arguments.current_run_id
+            )
+            return ToolObservation(
+                success=True,
+                summary="Compared two completed workflow runs using saved deterministic facts.",
+                result=comparison.model_dump(mode="json"),
+            )
+
+        tools.extend(
+            [
+                TypedTool(
+                    "workflow.list_runs",
+                    "List immutable run history only for a workflow bound to this task.",
+                    BoundWorkflowHistoryInput,
+                    list_workflow_runs,
+                ),
+                TypedTool(
+                    "workflow.get_run",
+                    "Inspect safe metadata and deterministic facts for a run of a bound workflow.",
+                    BoundWorkflowRunDetailInput,
+                    get_workflow_run,
+                ),
+                TypedTool(
+                    "workflow.compare_runs",
+                    "Deterministically compare two completed runs belonging to workflows bound to this task.",
+                    BoundWorkflowCompareInput,
+                    compare_workflow_runs,
+                ),
+            ]
+        )
+
     return tools
 
 
@@ -829,6 +907,28 @@ def _load_bound_dataset(resources: dict[str, AgentDatasetResource], filename: st
     if resource is None:
         raise ValueError(f"Dataset '{filename}' is not bound to this task.")
     return load_dataset(resource.filename, resource.content(), resource.sheet)
+
+
+def _workflow_run_summary(run, *, include_facts: bool) -> dict[str, Any]:
+    result = {
+        "run_id": str(run.run_id),
+        "workflow_id": str(run.workflow_id),
+        "version": run.version,
+        "status": run.status,
+        "started_at": run.started_at.isoformat(),
+        "completed_at": run.completed_at.isoformat(),
+        "failed_step": run.failed_step,
+        "error": run.error,
+        "lifecycle": [item.model_dump(mode="json") for item in run.lifecycle],
+        "input_snapshots": [item.model_dump(mode="json") for item in run.input_snapshots],
+        "verification": run.verification.model_dump(mode="json") if run.verification else None,
+        "warnings": run.warnings,
+        "artifacts": [item.model_dump(mode="json") for item in run.artifacts],
+        "drift_findings": [item.model_dump(mode="json") for item in run.drift_findings],
+    }
+    if include_facts:
+        result["facts"] = [item.model_dump(mode="json") for item in run.facts]
+    return result
 
 
 def _join_bound_datasets(resources: dict[str, AgentDatasetResource], arguments: BoundDatasetJoinInput):

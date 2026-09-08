@@ -40,6 +40,7 @@ class FakeConnection:
     def __init__(self) -> None:
         self.executed = []
         self.row = None
+        self.rows = []
 
     def __enter__(self):
         return self
@@ -49,7 +50,7 @@ class FakeConnection:
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params))
-        return FakeCursor(row=self.row)
+        return FakeCursor(row=self.row, rows=self.rows)
 
 
 def _settings(monkeypatch, mode: str, tmp_path: Path | None = None) -> Settings:
@@ -89,8 +90,8 @@ def test_postgres_workflow_repository_round_trips_recipe_and_persists_run(monkey
     repository = PostgresWorkflowRepository("postgresql://unused")
     workflow = Workflow(name="Inspect", steps=[WorkflowStep(tool="dataset.inspect", arguments={})])
 
-    repository.save(workflow)
     connection.row = (workflow.model_dump(mode="json"),)
+    repository.save(workflow)
     restored = repository.get(workflow.workflow_id)
     run = WorkflowRun(
         workflow_id=workflow.workflow_id,
@@ -99,12 +100,37 @@ def test_postgres_workflow_repository_round_trips_recipe_and_persists_run(monkey
         observations=[ToolObservation(success=True, summary="done")],
     )
     repository.save_run(run, {1: {"sheet": "Data"}})
+    run_row = (
+        run.run_id,
+        run.workflow_id,
+        run.version,
+        run.status,
+        [item.model_dump(mode="json") for item in run.observations],
+        run.failed_step,
+        run.error,
+        run.started_at,
+        run.completed_at,
+        run.definition_fingerprint,
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        None,
+    )
+    connection.row = run_row
+    restored_run = repository.get_run(run.run_id)
+    connection.rows = [run_row]
+    restored_history = repository.list_runs(workflow.workflow_id, 10, 0)
 
     sql = "\n".join(item[0] for item in connection.executed)
     assert "INSERT INTO workflows" in sql
     assert "INSERT INTO workflow_versions" in sql
     assert "INSERT INTO workflow_runs" in sql
     assert restored == workflow
+    assert restored_run == run
+    assert restored_history == [run]
 
 
 def test_artifact_metadata_uses_filesystem_body_and_integrity_check(monkeypatch, tmp_path) -> None:
@@ -198,10 +224,20 @@ def test_initial_migration_owns_all_production_tables() -> None:
     migration = Path(__file__).parents[1] / "migrations" / "versions" / "20260903_0001_persistence_foundation.py"
     text = migration.read_text(encoding="utf-8")
 
-    assert f'revision = "{MIGRATION_HEAD}"' in text
+    assert 'revision = "20260903_0001"' in text
     for table in (
         "documents", "document_chunks", "workflows", "workflow_versions",
         "workflow_runs", "artifacts", "execution_runs",
     ):
         assert f"CREATE TABLE {table}" in text
     assert "CREATE EXTENSION IF NOT EXISTS vector" in text
+
+    run_history = Path(__file__).parents[1] / "migrations" / "versions" / "20260907_0002_workflow_run_history.py"
+    run_history_text = run_history.read_text(encoding="utf-8")
+    assert f'revision = "{MIGRATION_HEAD}"' in run_history_text
+    assert 'down_revision = "20260903_0001"' in run_history_text
+    for column in (
+        "definition_fingerprint", "lifecycle", "input_snapshots", "facts",
+        "artifacts", "warnings", "drift_findings",
+    ):
+        assert f"ADD COLUMN {column}" in run_history_text
