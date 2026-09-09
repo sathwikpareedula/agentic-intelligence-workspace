@@ -104,7 +104,13 @@ async def prepare_august_report(
             settings.orchestrator_base_url,
             settings.orchestrator_max_output_tokens,
         )
-    orchestrator = AgentOrchestrator(provider, registry, EvidenceVerifier())
+    orchestrator = AgentOrchestrator(
+        provider,
+        registry,
+        EvidenceVerifier(),
+        input_cost_per_million=settings.orchestrator_input_cost_per_million,
+        output_cost_per_million=settings.orchestrator_output_cost_per_million,
+    )
     execution = await run_in_threadpool(orchestrator.execute, goal, 12)
     try:
         persist_execution(execution, get_execution_repository(settings), repository)

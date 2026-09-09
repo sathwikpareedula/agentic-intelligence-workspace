@@ -112,7 +112,13 @@ def execute_agent_task(
             settings.orchestrator_base_url,
             settings.orchestrator_max_output_tokens,
         )
-    orchestrator = AgentOrchestrator(provider, registry, EvidenceVerifier())
+    orchestrator = AgentOrchestrator(
+        provider,
+        registry,
+        EvidenceVerifier(),
+        input_cost_per_million=settings.orchestrator_input_cost_per_million,
+        output_cost_per_million=settings.orchestrator_output_cost_per_million,
+    )
     execution = orchestrator.execute(payload.goal, payload.max_iterations)
     try:
         persist_execution(

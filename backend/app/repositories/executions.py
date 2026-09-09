@@ -37,8 +37,8 @@ class PostgresExecutionRepository:
                     """
                     INSERT INTO execution_runs
                         (id, user_goal, status, started_at, completed_at, tool_trace,
-                         artifact_ids, verification, failure_reason)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         artifact_ids, verification, failure_reason, provider_usage)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                     """,
                     (
@@ -51,6 +51,7 @@ class PostgresExecutionRepository:
                         [artifact.artifact_id for artifact in execution.artifacts],
                         Jsonb(execution.verification.model_dump(mode="json")) if execution.verification else None,
                         execution.failure_reason,
+                        Jsonb(execution.provider_usage.model_dump(mode="json")) if execution.provider_usage else None,
                     ),
                 )
         except psycopg.Error as exc:

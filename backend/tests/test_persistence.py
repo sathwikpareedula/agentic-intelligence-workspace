@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
-from app.agent.models import AgentExecution, ToolObservation
+from app.agent.models import AgentExecution, ProviderUsageSummary, ToolObservation
 from app.api import health
 from app.config import Settings
 from app.dependencies import (
@@ -190,12 +190,22 @@ def test_execution_repository_persists_only_structured_trace(monkeypatch) -> Non
         status="completed",
         trace=[],
         completed_at=datetime.now(timezone.utc),
+        provider_usage=ProviderUsageSummary(
+            provider="openai",
+            model="test-model",
+            provider_calls=2,
+            latency_ms=25,
+            input_tokens=100,
+            output_tokens=20,
+            total_tokens=120,
+        ),
     )
 
     repository.save(execution)
 
     sql, params = connection.executed[0]
     assert "tool_trace" in sql
+    assert "provider_usage" in sql
     assert "reasoning" not in sql.lower()
     assert "Inspect data" in params
 
@@ -246,7 +256,13 @@ def test_initial_migration_owns_all_production_tables() -> None:
 
     observability = Path(__file__).parents[1] / "migrations" / "versions" / "20260908_0003_workflow_run_observability.py"
     observability_text = observability.read_text(encoding="utf-8")
-    assert f'revision = "{MIGRATION_HEAD}"' in observability_text
+    assert 'revision = "20260908_0003"' in observability_text
     assert 'down_revision = "20260907_0002"' in observability_text
     assert "ADD COLUMN step_summaries" in observability_text
     assert "ADD COLUMN diagnostics" in observability_text
+
+    provider_usage = Path(__file__).parents[1] / "migrations" / "versions" / "20260909_0004_execution_provider_usage.py"
+    provider_usage_text = provider_usage.read_text(encoding="utf-8")
+    assert f'revision = "{MIGRATION_HEAD}"' in provider_usage_text
+    assert 'down_revision = "20260908_0003"' in provider_usage_text
+    assert "ADD COLUMN provider_usage" in provider_usage_text

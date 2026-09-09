@@ -94,6 +94,18 @@ def test_orchestrator_settings_bound_provider_resource_controls(monkeypatch) -> 
             raise AssertionError(f"{name} must have an enforced upper bound.")
         monkeypatch.delenv(name)
 
+    monkeypatch.setenv("ORCHESTRATOR_INPUT_COST_PER_MILLION", "2")
+    try:
+        Settings.from_env()
+    except ConfigurationError as exc:
+        assert "both orchestrator cost rates" in str(exc)
+    else:
+        raise AssertionError("Partial provider pricing must fail closed.")
+    monkeypatch.setenv("ORCHESTRATOR_OUTPUT_COST_PER_MILLION", "8")
+    settings = Settings.from_env()
+    assert settings.orchestrator_input_cost_per_million == 2
+    assert settings.orchestrator_output_cost_per_million == 8
+
 
 def test_openai_provider_validates_structured_decisions_without_logging_credentials() -> None:
     responses = _Responses(ModelDecisionEnvelope(decision=ToolCall(tool="dataset.inspect", arguments={})))

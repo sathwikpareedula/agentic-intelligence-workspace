@@ -100,6 +100,18 @@ class WorkflowReference(StrictModel):
     rerun_url: str
 
 
+class ProviderUsageSummary(StrictModel):
+    provider: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=200)
+    provider_calls: int = Field(ge=1)
+    latency_ms: float = Field(ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    approximate_cost_usd: float | None = Field(default=None, ge=0)
+    cost_basis: Literal["operator_configured"] | None = None
+
+
 class AgentExecution(StrictModel):
     task_id: UUID = Field(default_factory=uuid4)
     goal: str
@@ -117,6 +129,7 @@ class AgentExecution(StrictModel):
     stages: list[ExecutionStage] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     saved_workflow: WorkflowReference | None = None
+    provider_usage: ProviderUsageSummary | None = None
 
 
 class VerificationFinding(StrictModel):

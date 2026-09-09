@@ -32,6 +32,8 @@ class Settings:
     orchestrator_timeout_seconds: float
     orchestrator_max_retries: int
     orchestrator_max_output_tokens: int
+    orchestrator_input_cost_per_million: float | None
+    orchestrator_output_cost_per_million: float | None
     allow_private_rest_targets: bool
 
     @classmethod
@@ -56,6 +58,8 @@ class Settings:
             orchestrator_timeout_seconds=_positive_float("ORCHESTRATOR_TIMEOUT_SECONDS", 30.0),
             orchestrator_max_retries=_non_negative_int("ORCHESTRATOR_MAX_RETRIES", 2),
             orchestrator_max_output_tokens=_positive_int("ORCHESTRATOR_MAX_OUTPUT_TOKENS", 3000),
+            orchestrator_input_cost_per_million=_optional_non_negative_float("ORCHESTRATOR_INPUT_COST_PER_MILLION"),
+            orchestrator_output_cost_per_million=_optional_non_negative_float("ORCHESTRATOR_OUTPUT_COST_PER_MILLION"),
             allow_private_rest_targets=os.getenv("ALLOW_PRIVATE_REST_TARGETS", "").strip() == "1",
         )
         if settings.chunk_overlap >= settings.chunk_size:
@@ -68,6 +72,10 @@ class Settings:
             raise ConfigurationError("ORCHESTRATOR_MAX_RETRIES must be at most 5.")
         if settings.orchestrator_max_output_tokens > 20_000:
             raise ConfigurationError("ORCHESTRATOR_MAX_OUTPUT_TOKENS must be at most 20000.")
+        if (settings.orchestrator_input_cost_per_million is None) != (
+            settings.orchestrator_output_cost_per_million is None
+        ):
+            raise ConfigurationError("Configure both orchestrator cost rates, or neither.")
         if not settings.artifact_storage_path:
             raise ConfigurationError("ARTIFACT_STORAGE_PATH cannot be empty.")
         return settings
@@ -107,6 +115,19 @@ def _positive_float(name: str, default: float) -> float:
         raise ConfigurationError(f"{name} must be a number.") from exc
     if value <= 0:
         raise ConfigurationError(f"{name} must be greater than zero.")
+    return value
+
+
+def _optional_non_negative_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be a number.") from exc
+    if value < 0:
+        raise ConfigurationError(f"{name} cannot be negative.")
     return value
 
 

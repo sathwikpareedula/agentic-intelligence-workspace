@@ -148,6 +148,15 @@ class NumericFact(StrictModel):
     unit: str | None = None
 
 
+class VisualizationSpec(StrictModel):
+    kind: Literal["metric", "bar", "line", "table"]
+    title: str = Field(min_length=1, max_length=200)
+    x_field: str | None = Field(default=None, max_length=200)
+    y_fields: list[str] = Field(default_factory=list, max_length=6)
+    rationale: str = Field(min_length=1, max_length=500)
+    max_points: int = Field(ge=1, le=100)
+
+
 class AnalyticsResult(StrictModel):
     status: Literal["completed"]
     plan: AnalyticsPlan
@@ -160,6 +169,7 @@ class AnalyticsResult(StrictModel):
     warnings: list[str] = Field(default_factory=list)
     provenance: DatasetProvenance | None = None
     explanation: str
+    visualization: VisualizationSpec
 
 
 class AnalyticsExecuteRequest(StrictModel):

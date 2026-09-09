@@ -29,6 +29,7 @@ type Execution = {
   warnings: string[];
   saved_workflow?: SavedWorkflow;
   verification?: { status: string; findings: { claim: string; status: string; explanation: string }[] };
+  provider_usage?: { provider: string; model: string; provider_calls: number; latency_ms: number; input_tokens?: number | null; output_tokens?: number | null; total_tokens?: number | null; approximate_cost_usd?: number | null; cost_basis?: "operator_configured" | null } | null;
 };
 type DocumentResult = { document_id: string; filename: string; page_count: number; chunk_count: number };
 type TemplateMapping = { target_field: string; source_role?: string; source_field?: string; mapping_type: string; confidence: number; evidence: string; status: string };
@@ -65,6 +66,7 @@ type AnalyticsResult = {
   rows: Record<string, string | number | boolean | null>[];
   row_count: number;
   plan: Record<string, unknown>;
+  visualization: { kind: "metric" | "bar" | "line" | "table"; title: string; x_field?: string; y_fields: string[]; rationale: string; max_points: number };
 };
 type SavedWorkflow = { workflow_id: string; name: string; version: number; rerun_url: string };
 type WorkflowRun = {
@@ -147,6 +149,32 @@ async function fileToBase64(file: File): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(index, index + batchSize));
   }
   return btoa(binary);
+}
+
+function AnalyticsVisualization({ result }: { result: AnalyticsResult }) {
+  const spec = result.visualization;
+  const yField = spec.y_fields[0];
+  const points = yField ? result.rows.slice(0, spec.max_points).flatMap((row) => {
+    const value = row[yField];
+    return typeof value === "number" && Number.isFinite(value)
+      ? [{ label: String(spec.x_field ? row[spec.x_field] ?? "Unknown" : yField), value }]
+      : [];
+  }) : [];
+  const maximum = Math.max(1, ...points.map((point) => Math.abs(point.value)));
+  const minimum = Math.min(...points.map((point) => point.value));
+  const peak = Math.max(...points.map((point) => point.value));
+  const range = peak - minimum;
+
+  return <section className="panel analyticsVisual">
+    <div className="panelTitle"><h2>{spec.title}</h2><span>{spec.kind}</span></div>
+    <p className="muted">{spec.rationale}</p>
+    {spec.kind === "bar" && points.length > 0 ? <div className="barChart" role="img" aria-label={`${spec.title}; ${yField}`}>
+      {points.map((point, index) => <div className="barRow" key={`${point.label}-${index}`}><span>{point.label}</span><i className={point.value < 0 ? "negative" : undefined} style={{ width: `${Math.max(2, Math.abs(point.value) / maximum * 100)}%` }} /><strong>{point.value}</strong></div>)}
+    </div> : spec.kind === "line" && points.length > 1 ? <div className="trendChart">
+      <svg role="img" aria-label={`${spec.title}; ${yField}`} viewBox="0 0 100 40" preserveAspectRatio="none"><polyline points={points.map((point, index) => `${index * 100 / (points.length - 1)},${range === 0 ? 20 : 36 - (point.value - minimum) / range * 32}`).join(" ")} /></svg>
+      <div className="trendLabels">{points.map((point, index) => <span key={`${point.label}-${index}`}>{point.label}: {point.value}</span>)}</div>
+    </div> : <div className="metricPreview">{spec.y_fields.map((field) => <span key={field}><strong>{field.replaceAll("_", " ")}</strong><small>{String(result.rows[0]?.[field] ?? "Shown in result table")}</small></span>)}</div>}
+  </section>;
 }
 
 export default function WorkspacePage() {
@@ -610,6 +638,7 @@ export default function WorkspacePage() {
       <section className="panel"><div className="panelTitle"><h2>Result table</h2><span>{analyticsResult?.row_count ?? 0} rows</span></div>
         {analyticsResult ? <pre className="sourceNote">{JSON.stringify(analyticsResult.rows, null, 2)}</pre> : <p className="muted">Aggregations stay inspectable and rerunnable.</p>}
       </section>
+      {analyticsResult && <AnalyticsVisualization result={analyticsResult} />}
     </div> : demo === "sources" ? <div className="results">
       <section className="panel answer"><div className="panelTitle"><h2>Imported source</h2><span className={`pill ${sourceResult ? "verified" : "idle"}`}>{sourceResult ? "imported" : "Awaiting import"}</span></div>
         {sourceResult ? <pre className="sourceNote">{JSON.stringify(sourceResult, null, 2)}</pre> : <p>JSON and Parquet become inspectable datasets. TXT is chunked through the existing retrieval pipeline. PostgreSQL and REST imports require server-side secret references.</p>}
@@ -630,7 +659,7 @@ export default function WorkspacePage() {
         </blockquote>)}
       </section>}
       <section className="panel answer"><div className="panelTitle"><h2>Management answer</h2><span className={`pill ${execution?.verification?.status ?? "idle"}`}>{execution?.verification?.status?.replaceAll("_", " ") ?? "Awaiting task"}</span></div><p>{execution?.answer ?? "Your grounded answer will appear here after deterministic tools finish."}</p><div className="deliverables">{execution?.artifacts.map((artifact) => <a className="artifactLink" href={`${API}${artifact.download_url}`} key={artifact.artifact_id}>Download management workbook<small>{artifact.filename} · {artifact.row_count} regional rows</small></a>)}{execution?.saved_workflow && <div className="workflowCard"><span>Reusable recipe saved</span><strong>{execution.saved_workflow.name}</strong><small>Version {execution.saved_workflow.version} · schema drift checked on rerun</small></div>}</div>{execution?.failure_reason && <p className="error">{execution.failure_reason}</p>}</section>
-      <section className="panel tracePanel"><div className="panelTitle"><h2>Execution trace</h2><span>{execution?.stages.length ?? 0} stages</span></div><ol className="trace">{execution?.stages.map((stage, index) => <li key={`${stage.name}-${index}`}><span className={`dot ${stage.status === "completed" ? "ok" : stage.status === "warning" ? "warn" : "fail"}`} /><div><div className="stageTitle"><strong>{stage.name}</strong><span>{stage.status}</span></div><p>{stage.explanation}</p>{Object.keys(stage.row_counts).length > 0 && <div className="facts">{Object.entries(stage.row_counts).map(([label, value]) => <small key={label}>{label.replaceAll("_", " ")}: {value}</small>)}</div>}<small>{stage.tool_name ? `${stage.tool_name} · ` : ""}{stage.evidence_ids.length} evidence · {stage.artifact_ids.length} artifacts{stage.verification_result ? ` · ${stage.verification_result.replaceAll("_", " ")}` : ""}</small></div></li>) ?? <li className="empty">Goal, plan, tool outcomes, evidence, verification, and artifacts will appear here.</li>}</ol>{execution && <details className="technicalTrace"><summary>Inspect validated tool calls</summary>{execution.trace.map((step) => <article key={step.step}><strong>{step.step}. {step.requested_tool}</strong><span>{step.duration_ms.toFixed(1)} ms</span><p>{step.observation}</p></article>)}</details>}</section>
+      <section className="panel tracePanel"><div className="panelTitle"><h2>Execution trace</h2><span>{execution?.stages.length ?? 0} stages</span></div>{execution?.provider_usage && <div className="providerUsage"><strong>{execution.provider_usage.provider} · {execution.provider_usage.model}</strong><span>{execution.provider_usage.provider_calls} calls · {execution.provider_usage.total_tokens ?? "token count unavailable"} tokens · {execution.provider_usage.latency_ms.toFixed(1)} ms{execution.provider_usage.approximate_cost_usd != null ? ` · $${execution.provider_usage.approximate_cost_usd.toFixed(6)} estimated` : ""}</span></div>}<ol className="trace">{execution?.stages.map((stage, index) => <li key={`${stage.name}-${index}`}><span className={`dot ${stage.status === "completed" ? "ok" : stage.status === "warning" ? "warn" : "fail"}`} /><div><div className="stageTitle"><strong>{stage.name}</strong><span>{stage.status}</span></div><p>{stage.explanation}</p>{Object.keys(stage.row_counts).length > 0 && <div className="facts">{Object.entries(stage.row_counts).map(([label, value]) => <small key={label}>{label.replaceAll("_", " ")}: {value}</small>)}</div>}<small>{stage.tool_name ? `${stage.tool_name} · ` : ""}{stage.evidence_ids.length} evidence · {stage.artifact_ids.length} artifacts{stage.verification_result ? ` · ${stage.verification_result.replaceAll("_", " ")}` : ""}</small></div></li>) ?? <li className="empty">Goal, plan, tool outcomes, evidence, verification, and artifacts will appear here.</li>}</ol>{execution && <details className="technicalTrace"><summary>Inspect validated tool calls</summary>{execution.trace.map((step) => <article key={step.step}><strong>{step.step}. {step.requested_tool}</strong><span>{step.duration_ms.toFixed(1)} ms</span><p>{step.observation}</p></article>)}</details>}</section>
       <section className="panel"><div className="panelTitle"><h2>Evidence & verification</h2><span>{execution?.citations.length ?? 0} citations</span></div>{execution?.warnings.length ? <div className="warnings"><strong>Data and join warnings</strong>{execution.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}{execution?.citations.map((citation) => <article className="citation" key={citation.chunk_id}><strong>{citation.filename} · page {citation.page_number}</strong><code>{citation.chunk_id}</code></article>)}{execution?.verification?.findings.map((finding, index) => <article className="finding" key={`${finding.claim}-${index}`}><span className={`pill ${finding.status}`}>{finding.status.replaceAll("_", " ")}</span><strong>{finding.claim}</strong><p>{finding.explanation}</p></article>) ?? <p className="muted">Source pages and claim checks will appear after execution.</p>}</section>
     </div>}
     {activeWorkflow && <section className="panel workflowRunsPanel">

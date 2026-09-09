@@ -41,6 +41,7 @@ def evaluate_analytics_cases(path: Path) -> dict:
         "O_grounded_explanation": _grounded(sales),
         "P_workflow_rerun": _workflow(sales, True),
         "Q_schema_drift": _workflow(sales, False),
+        "R_visualization_selection": _visualizations(sales),
     }
     cases = [{"id": item["id"], "name": item["name"], "passed": bool(observed.get(item["id"])), "observed": observed.get(item["id"])} for item in specification["cases"]]
     passed = sum(item["passed"] for item in cases)
@@ -103,6 +104,31 @@ def _workflow(sales: bytes, matching: bool) -> bool:
         return workflows.rerun(workflow.workflow_id, {}).status == "completed"
     replacement = base64.b64encode(b"region\nEast\n").decode()
     return workflows.rerun(workflow.workflow_id, {1: {"content_base64": replacement}}).status == "failed"
+
+
+def _visualizations(sales: bytes) -> bool:
+    grouped = execute_uploaded_analytics(
+        "analytics_sales.csv",
+        sales,
+        AnalyticsPlan(group_by=["region"], metrics=[MetricSpec(name="sum", column="net_sales")]),
+    )
+    trend = execute_uploaded_analytics(
+        "s.csv",
+        SERIES,
+        AnalyticsPlan(analysis="percent_change", value_column="value", order_column="period"),
+    )
+    scalar = execute_uploaded_analytics(
+        "analytics_sales.csv",
+        sales,
+        AnalyticsPlan(metrics=[MetricSpec(name="sum", column="net_sales")]),
+    )
+    return (
+        grouped.visualization.kind == "bar"
+        and grouped.visualization.x_field == "region"
+        and trend.visualization.kind == "line"
+        and trend.visualization.x_field == "period"
+        and scalar.visualization.kind == "metric"
+    )
 
 
 def _sql(statement: str) -> bool:

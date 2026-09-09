@@ -51,6 +51,8 @@ class FakeModelProvider:
 class OpenAIModelProvider:
     """Responses API adapter that returns one validated orchestration decision per turn."""
 
+    provider_name = "openai"
+
     _instructions = """You are the single bounded orchestrator for a data and knowledge workspace.
 Return exactly one structured decision per turn: call one available typed tool, or complete the task.
 Use resource.list when resource names or IDs are not yet known. Plan incrementally from observations.
@@ -115,6 +117,10 @@ Complete only when the requested work is done or the available evidence is insuf
     @property
     def last_call_metrics(self) -> ProviderCallMetrics | None:
         return self._last_call_metrics
+
+    @property
+    def model_name(self) -> str:
+        return self._model
 
     def decide(self, goal: str, observations: list[ToolObservation]) -> ModelDecision:
         input_payload = {

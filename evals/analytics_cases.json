@@ -16,6 +16,7 @@
     {"id": "N_exact_deterministic_fact", "name": "Exact deterministic fact"},
     {"id": "O_grounded_explanation", "name": "Grounded explanation"},
     {"id": "P_workflow_rerun", "name": "Workflow rerun"},
-    {"id": "Q_schema_drift", "name": "Schema drift"}
+    {"id": "Q_schema_drift", "name": "Schema drift"},
+    {"id": "R_visualization_selection", "name": "Deterministic visualization selection"}
   ]
 }

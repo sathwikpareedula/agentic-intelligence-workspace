@@ -17,6 +17,7 @@ from app.models.analytics import (
     AnalyticsSqlRequest,
     MetricSpec,
     NumericFact,
+    VisualizationSpec,
 )
 from app.models.sources import PostgresImportRequest
 from app.services.datasets import LoadedDataset, inspect_dataset, load_dataset
@@ -79,6 +80,7 @@ def execute_dataset_analytics(dataset: LoadedDataset, plan: AnalyticsPlan) -> An
         warnings=warnings,
         provenance=dataset.provenance,
         explanation=explanation,
+        visualization=_select_visualization(plan, result_frame),
     )
 
 
@@ -133,6 +135,47 @@ def execute_sql_analytics(request: AnalyticsSqlRequest) -> AnalyticsResult:
 def inspect_for_analytics(filename: str, content: bytes, sheet: str | None = None):
     dataset = load_dataset(filename, content, sheet)
     return inspect_dataset(dataset)
+
+
+def _select_visualization(plan: AnalyticsPlan, frame: pd.DataFrame) -> VisualizationSpec:
+    """Select a bounded display from the deterministic result shape, never raw model judgment."""
+    max_points = max(1, min(len(frame), 100))
+    numeric = [str(column) for column in frame.columns if _is_numeric_series(frame[column])]
+    if len(frame) <= 1:
+        return VisualizationSpec(
+            kind="metric",
+            title="Deterministic result summary",
+            y_fields=numeric[:6],
+            rationale="A single result row is clearer as verified metric values than as a chart.",
+            max_points=max_points,
+        )
+    if plan.analysis in {"percent_change", "growth_rate", "rolling_mean"}:
+        y_fields = [name for name in ("percent_change", "growth_rate", "rolling_mean") if name in frame.columns]
+        if plan.order_column in frame.columns and y_fields:
+            return VisualizationSpec(
+                kind="line",
+                title=f"{plan.analysis.replace('_', ' ').title()} over {plan.order_column}",
+                x_field=plan.order_column,
+                y_fields=y_fields,
+                rationale="Ordered deterministic results are shown as a trend without changing their values.",
+                max_points=max_points,
+            )
+    if plan.group_by and numeric:
+        return VisualizationSpec(
+            kind="bar",
+            title=f"{plan.analysis.replace('_', ' ').title()} by {plan.group_by[0]}",
+            x_field=plan.group_by[0],
+            y_fields=[name for name in numeric if name not in plan.group_by][:6],
+            rationale="Grouped deterministic values are suitable for bounded category comparison.",
+            max_points=max_points,
+        )
+    return VisualizationSpec(
+        kind="table",
+        title="Deterministic result table",
+        y_fields=numeric[:6],
+        rationale="The result shape does not support a clearer bounded chart without inventing an encoding.",
+        max_points=max_points,
+    )
 
 
 def _analyze(frame: pd.DataFrame, plan: AnalyticsPlan, dataset_name: str):

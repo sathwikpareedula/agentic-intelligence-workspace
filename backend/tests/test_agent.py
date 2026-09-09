@@ -7,7 +7,7 @@ from pydantic import Field
 
 from app.agent.models import Complete, ToolCall, ToolObservation
 from app.agent.orchestrator import AgentOrchestrator
-from app.agent.providers import FakeModelProvider
+from app.agent.providers import FakeModelProvider, ProviderCallMetrics
 from app.agent.tools import ToolInput, ToolRegistry, TypedTool, dataset_tools
 from app.main import app
 
@@ -48,6 +48,43 @@ def test_successful_multistep_execution_has_complete_trace() -> None:
     assert result.trace[0].artifact_ids == ["artifact-1"]
     assert result.trace[0].source_ids == ["source-1"]
     assert result.trace[0].duration_ms >= 0
+    assert result.provider_usage is None
+
+
+def test_provider_usage_is_aggregated_with_operator_configured_cost() -> None:
+    class MeasuredProvider(FakeModelProvider):
+        provider_name = "measured"
+        model_name = "fixture-v1"
+
+        def __init__(self):
+            super().__init__([ToolCall(tool="number.read", arguments={"value": 2}), Complete(answer="Done")])
+            self.last_call_metrics = None
+
+        def decide(self, goal, observations):
+            decision = super().decide(goal, observations)
+            self.last_call_metrics = ProviderCallMetrics(
+                latency_ms=12.5,
+                input_tokens=100,
+                output_tokens=25,
+                total_tokens=125,
+            )
+            return decision
+
+    result = AgentOrchestrator(
+        MeasuredProvider(),
+        ToolRegistry([_number_tool()]),
+        input_cost_per_million=2.0,
+        output_cost_per_million=8.0,
+    ).execute("Read one number")
+
+    assert result.provider_usage is not None
+    assert result.provider_usage.provider == "measured"
+    assert result.provider_usage.model == "fixture-v1"
+    assert result.provider_usage.provider_calls == 2
+    assert result.provider_usage.latency_ms == 25
+    assert result.provider_usage.total_tokens == 250
+    assert result.provider_usage.approximate_cost_usd == 0.0008
+    assert result.provider_usage.cost_basis == "operator_configured"
 
 
 def test_invalid_arguments_and_unknown_tool_are_observed_for_replanning() -> None:

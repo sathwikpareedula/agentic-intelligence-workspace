@@ -94,6 +94,19 @@ h2 { margin:0; font-size:.95rem; letter-spacing:.02em; }
 .provenanceList { margin-top:14px; }
 .provenanceList p { display:flex; flex-direction:column; gap:3px; padding:8px 0; margin:0; border-bottom:1px solid var(--line); }
 .provenanceList span { color:var(--muted); font-size:.82rem; overflow-wrap:anywhere; }
+.analyticsVisual { grid-column:1/-1; }
+.barChart { display:grid; gap:10px; margin-top:16px; }
+.barRow { display:grid; grid-template-columns:minmax(80px,140px) minmax(80px,1fr) auto; gap:10px; align-items:center; font-size:.82rem; }
+.barRow i { display:block; min-height:14px; border-radius:4px; background:var(--green); opacity:.78; }
+.barRow i.negative { background:var(--red); }
+.barRow strong { font-variant-numeric:tabular-nums; }
+.trendChart svg { width:100%; height:170px; margin-top:12px; overflow:visible; }
+.trendChart polyline { fill:none; stroke:var(--green); stroke-width:2; vector-effect:non-scaling-stroke; }
+.trendLabels,.metricPreview { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+.trendLabels span,.metricPreview span { padding:8px 10px; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-size:.78rem; }
+.metricPreview span { display:flex; flex-direction:column; gap:3px; }
+.providerUsage { display:flex; justify-content:space-between; gap:12px; margin-top:14px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#fbfcf9; }
+.providerUsage span { color:var(--muted); font-size:.82rem; text-align:right; }
 .workflowRunsPanel { margin-top:16px; }
 .workflowRunsPanel .panelTitle>div h2 { margin-top:5px; font-size:1.15rem; }
 .workflowOverview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:16px; }
