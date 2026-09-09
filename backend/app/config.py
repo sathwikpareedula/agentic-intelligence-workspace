@@ -62,6 +62,12 @@ class Settings:
             raise ConfigurationError("RETRIEVAL_CHUNK_OVERLAP must be smaller than RETRIEVAL_CHUNK_SIZE.")
         if not settings.orchestrator_model:
             raise ConfigurationError("ORCHESTRATOR_MODEL cannot be empty.")
+        if settings.orchestrator_timeout_seconds > 120:
+            raise ConfigurationError("ORCHESTRATOR_TIMEOUT_SECONDS must be at most 120.")
+        if settings.orchestrator_max_retries > 5:
+            raise ConfigurationError("ORCHESTRATOR_MAX_RETRIES must be at most 5.")
+        if settings.orchestrator_max_output_tokens > 20_000:
+            raise ConfigurationError("ORCHESTRATOR_MAX_OUTPUT_TOKENS must be at most 20000.")
         if not settings.artifact_storage_path:
             raise ConfigurationError("ARTIFACT_STORAGE_PATH cannot be empty.")
         return settings

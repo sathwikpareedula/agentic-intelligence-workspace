@@ -32,6 +32,7 @@ test = [
 retrieval-eval = "app.evaluation.retrieval:main"
 product-eval = "app.evaluation.product:main"
 agent-eval = "app.evaluation.agent:main"
+model-eval = "app.evaluation.model_quality:main"
 template-transform-eval = "app.evaluation.template_transform:main"
 sources-eval = "app.evaluation.sources:main"
 analytics-eval = "app.evaluation.analytics:main"

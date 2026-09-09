@@ -19,16 +19,17 @@ ROOT = Path(__file__).parents[2]
 
 
 class _Responses:
-    def __init__(self, result=None, error=None) -> None:
+    def __init__(self, result=None, error=None, usage=None) -> None:
         self.result = result
         self.error = error
+        self.usage = usage
         self.kwargs = None
 
     def parse(self, **kwargs):
         self.kwargs = kwargs
         if self.error:
             raise self.error
-        return SimpleNamespace(output_parsed=self.result)
+        return SimpleNamespace(output_parsed=self.result, usage=self.usage)
 
 
 class _Client:
@@ -77,6 +78,23 @@ def test_orchestrator_settings_support_dedicated_key_and_credential_free_base_ur
         raise AssertionError("Base URLs with embedded credentials must fail configuration validation.")
 
 
+def test_orchestrator_settings_bound_provider_resource_controls(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "demo")
+    for name, value, expected in (
+        ("ORCHESTRATOR_TIMEOUT_SECONDS", "121", "at most 120"),
+        ("ORCHESTRATOR_MAX_RETRIES", "6", "at most 5"),
+        ("ORCHESTRATOR_MAX_OUTPUT_TOKENS", "20001", "at most 20000"),
+    ):
+        monkeypatch.setenv(name, value)
+        try:
+            Settings.from_env()
+        except ConfigurationError as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError(f"{name} must have an enforced upper bound.")
+        monkeypatch.delenv(name)
+
+
 def test_openai_provider_validates_structured_decisions_without_logging_credentials() -> None:
     responses = _Responses(ModelDecisionEnvelope(decision=ToolCall(tool="dataset.inspect", arguments={})))
     provider = OpenAIModelProvider(
@@ -123,6 +141,30 @@ def test_openai_provider_configures_base_url_timeout_and_sdk_retries(monkeypatch
     assert captured["max_retries"] == 3
 
 
+def test_openai_provider_exposes_only_non_sensitive_call_metrics() -> None:
+    responses = _Responses(
+        ModelDecisionEnvelope(decision=Complete(answer="Ready")),
+        usage=SimpleNamespace(input_tokens=125, output_tokens=25, total_tokens=150),
+    )
+    provider = OpenAIModelProvider(
+        "private-key",
+        "test-model",
+        [],
+        3.0,
+        0,
+        client=_Client(responses),
+    )
+
+    assert provider.decide("Finish", []).answer == "Ready"
+    metrics = provider.last_call_metrics
+    assert metrics is not None
+    assert metrics.input_tokens == 125
+    assert metrics.output_tokens == 25
+    assert metrics.total_tokens == 150
+    assert metrics.latency_ms >= 0
+    assert "private-key" not in repr(metrics)
+
+
 def test_openai_provider_maps_provider_errors() -> None:
     provider = OpenAIModelProvider(
         "test-key",
@@ -141,6 +183,32 @@ def test_openai_provider_maps_provider_errors() -> None:
         assert "provider detail" not in str(exc)
     else:
         raise AssertionError("Provider errors must be mapped to a stable public-safe error.")
+
+
+def test_openai_provider_rejects_unsafe_direct_configuration() -> None:
+    invalid = (
+        {"base_url": "https://user:secret@provider.invalid/v1"},
+        {"timeout_seconds": 121},
+        {"max_retries": 6},
+        {"max_output_tokens": 20_001},
+    )
+    for override in invalid:
+        options = {
+            "api_key": "test-key",
+            "model": "test-model",
+            "tool_specifications": [],
+            "timeout_seconds": 3.0,
+            "max_retries": 0,
+            "max_output_tokens": 3000,
+            "client": _Client(_Responses()),
+            **override,
+        }
+        try:
+            OpenAIModelProvider(**options)
+        except ValueError as exc:
+            assert "secret" not in str(exc)
+        else:
+            raise AssertionError("Unsafe direct provider configuration must fail closed.")
 
 
 def test_openai_provider_rejects_malformed_structured_output() -> None:

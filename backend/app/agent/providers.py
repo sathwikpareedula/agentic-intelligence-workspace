@@ -1,8 +1,11 @@
 """Provider boundary for an orchestrating model and deterministic test provider."""
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 import json
+from time import perf_counter
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, OpenAIError
 from pydantic import ValidationError
@@ -20,6 +23,16 @@ class ModelProviderError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+@dataclass(frozen=True)
+class ProviderCallMetrics:
+    """Non-sensitive usage metadata for one provider decision."""
+
+    latency_ms: float
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class FakeModelProvider:
@@ -62,6 +75,29 @@ Complete only when the requested work is done or the available evidence is insuf
         *,
         client=None,
     ) -> None:
+        if not api_key.strip():
+            raise ValueError("A non-empty provider API key is required.")
+        if not model.strip():
+            raise ValueError("A non-empty provider model is required.")
+        if not 0 < timeout_seconds <= 120:
+            raise ValueError("Provider timeout must be greater than zero and at most 120 seconds.")
+        if not 0 <= max_retries <= 5:
+            raise ValueError("Provider retries must be between zero and five.")
+        if not 0 < max_output_tokens <= 20_000:
+            raise ValueError("Provider output tokens must be between 1 and 20,000.")
+        if base_url:
+            parsed = urlparse(base_url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "Provider base URL must be HTTP(S) without embedded credentials, query, or fragment."
+                )
         client_options: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout_seconds,
@@ -70,10 +106,15 @@ Complete only when the requested work is done or the available evidence is insuf
         if base_url:
             client_options["base_url"] = base_url
         self._client = client or OpenAI(**client_options)
-        self._model = model
+        self._model = model.strip()
         self._tool_specifications = tool_specifications
         self._timeout_seconds = timeout_seconds
         self._max_output_tokens = max_output_tokens
+        self._last_call_metrics: ProviderCallMetrics | None = None
+
+    @property
+    def last_call_metrics(self) -> ProviderCallMetrics | None:
+        return self._last_call_metrics
 
     def decide(self, goal: str, observations: list[ToolObservation]) -> ModelDecision:
         input_payload = {
@@ -81,6 +122,7 @@ Complete only when the requested work is done or the available evidence is insuf
             "available_tools": self._tool_specifications,
             "observations": [_provider_safe(item.model_dump(mode="json")) for item in observations],
         }
+        started = perf_counter()
         try:
             response = self._client.responses.parse(
                 model=self._model,
@@ -93,18 +135,43 @@ Complete only when the requested work is done or the available evidence is insuf
                 timeout=self._timeout_seconds,
             )
         except (APITimeoutError, TimeoutError) as exc:
+            self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
             raise ModelProviderError("provider_timeout", "Orchestrator provider timed out.") from exc
         except APIConnectionError as exc:
+            self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
             raise ModelProviderError("provider_unavailable", "Orchestrator provider is unavailable.") from exc
         except OpenAIError as exc:
+            self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
             raise ModelProviderError("provider_failure", "Orchestrator provider request failed.") from exc
         except (ValidationError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
             raise ModelProviderError("malformed_response", "Orchestrator provider returned malformed structured output.") from exc
+        self._last_call_metrics = _response_metrics(response, (perf_counter() - started) * 1000)
         try:
             parsed = ModelDecisionEnvelope.model_validate(response.output_parsed)
         except (AttributeError, ValidationError, TypeError) as exc:
             raise ModelProviderError("malformed_response", "Orchestrator provider returned malformed structured output.") from exc
         return parsed.decision
+
+
+def _response_metrics(response: Any, latency_ms: float) -> ProviderCallMetrics:
+    usage = getattr(response, "usage", None)
+
+    def value(name: str) -> int | None:
+        raw = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+        return raw if isinstance(raw, int) and raw >= 0 else None
+
+    input_tokens = value("input_tokens")
+    output_tokens = value("output_tokens")
+    total_tokens = value("total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    return ProviderCallMetrics(
+        latency_ms=latency_ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
 
 
 def _provider_safe(value: Any) -> Any:

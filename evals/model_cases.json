@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "goal_to_typed_plan",
+      "capability": "natural-language goal to a correct typed deterministic plan",
+      "goal": "Using the bound sales data, report total net sales by region. Inspect before calculating.",
+      "tools": ["resource.list", "dataset.inspect", "analytics.execute"],
+      "steps": [
+        {
+          "tool": "resource.list",
+          "observation": {
+            "success": true,
+            "summary": "Listed one bound dataset.",
+            "result": {"datasets": ["sales.csv"], "document_ids": [], "workflow_ids": []}
+          }
+        },
+        {
+          "tool": "dataset.inspect",
+          "required_arguments": {"dataset": "sales.csv"},
+          "observation": {
+            "success": true,
+            "summary": "Inspected sales.csv.",
+            "result": {"filename": "sales.csv", "columns": ["region", "net_sales"], "row_count": 4}
+          }
+        },
+        {
+          "tool": "analytics.execute",
+          "required_arguments": {
+            "dataset": "sales.csv",
+            "plan": {
+              "analysis": "metrics",
+              "group_by": ["region"],
+              "metrics": [{"name": "sum", "column": "net_sales", "alias": "net_sales"}]
+            }
+          },
+          "observation": {
+            "success": true,
+            "summary": "Calculated regional net sales deterministically.",
+            "result": {
+              "facts": [{"key": "regional.North.net_sales", "value": 1200.0, "unit": "USD"}],
+              "verification_facts": {"regional.North.net_sales": 1200.0}
+            }
+          }
+        }
+      ],
+      "fixture_decisions": [
+        {"type": "tool_call", "tool": "resource.list", "arguments": {}},
+        {"type": "tool_call", "tool": "dataset.inspect", "arguments": {"dataset": "sales.csv"}},
+        {
+          "type": "tool_call",
+          "tool": "analytics.execute",
+          "arguments": {
+            "dataset": "sales.csv",
+            "plan": {
+              "analysis": "metrics",
+              "group_by": ["region"],
+              "metrics": [{"name": "sum", "column": "net_sales", "alias": "net_sales"}],
+              "expected_columns": ["region", "net_sales"]
+            }
+          }
+        },
+        {
+          "type": "complete",
+          "answer": "North net sales are 1200 USD.",
+          "claims": [{"text": "North net sales are 1200 USD.", "kind": "numeric", "value": 1200.0, "evidence_keys": ["regional.North.net_sales"], "unit": "USD"}]
+        }
+      ],
+      "expectation": {
+        "tool_sequence": ["resource.list", "dataset.inspect", "analytics.execute"],
+        "resource_argument_paths": {"dataset.inspect": ["dataset"], "analytics.execute": ["dataset"]},
+        "allowed_resource_ids": ["sales.csv"],
+        "allowed_evidence_keys": ["regional.North.net_sales"],
+        "allowed_numbers": ["1200"],
+        "required_answer_terms": ["North", "1200", "USD"],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "correct_tool_selection",
+      "capability": "selection of deterministic What Changed tool",
+      "goal": "Compare the two bound completed workflow runs. Do not recalculate the metrics.",
+      "tools": ["dataset.inspect", "analytics.execute", "workflow.compare_runs"],
+      "steps": [
+        {
+          "tool": "workflow.compare_runs",
+          "required_arguments": {
+            "previous_run_id": "33333333-3333-4333-8333-333333333333",
+            "current_run_id": "44444444-4444-4444-8444-444444444444"
+          },
+          "observation": {
+            "success": true,
+            "summary": "Compared the two saved runs.",
+            "result": {"status": "completed", "metric_changes": []}
+          }
+        }
+      ],
+      "fixture_decisions": [
+        {
+          "type": "tool_call",
+          "tool": "workflow.compare_runs",
+          "arguments": {
+            "previous_run_id": "33333333-3333-4333-8333-333333333333",
+            "current_run_id": "44444444-4444-4444-8444-444444444444"
+          }
+        },
+        {"type": "complete", "answer": "The saved run comparison completed without recomputing metrics."}
+      ],
+      "expectation": {
+        "tool_sequence": ["workflow.compare_runs"],
+        "resource_argument_paths": {"workflow.compare_runs": ["previous_run_id", "current_run_id"]},
+        "allowed_resource_ids": ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"],
+        "required_answer_terms": ["comparison", "without recomputing"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "valid_structured_arguments",
+      "capability": "valid structured arguments for target variance analytics",
+      "goal": "Calculate actual-versus-target variance by region from performance.csv.",
+      "tools": ["analytics.execute"],
+      "steps": [
+        {
+          "tool": "analytics.execute",
+          "required_arguments": {
+            "dataset": "performance.csv",
+            "plan": {"analysis": "target_variance", "group_by": ["region"], "value_column": "actual", "second_column": "target"}
+          },
+          "observation": {
+            "success": true,
+            "summary": "Calculated target variance.",
+            "result": {"facts": [{"key": "variance.North", "value": -50.0, "unit": "USD"}], "verification_facts": {"variance.North": -50.0}}
+          }
+        }
+      ],
+      "fixture_decisions": [
+        {
+          "type": "tool_call",
+          "tool": "analytics.execute",
+          "arguments": {
+            "dataset": "performance.csv",
+            "plan": {"analysis": "target_variance", "group_by": ["region"], "value_column": "actual", "second_column": "target", "expected_columns": ["region", "actual", "target"]}
+          }
+        },
+        {
+          "type": "complete",
+          "answer": "North variance is -50 USD.",
+          "claims": [{"text": "North variance is -50 USD.", "kind": "numeric", "value": -50.0, "evidence_keys": ["variance.North"], "unit": "USD"}]
+        }
+      ],
+      "expectation": {
+        "tool_sequence": ["analytics.execute"],
+        "resource_argument_paths": {"analytics.execute": ["dataset"]},
+        "allowed_resource_ids": ["performance.csv"],
+        "allowed_evidence_keys": ["variance.North"],
+        "allowed_numbers": ["-50"],
+        "required_answer_terms": ["North", "-50", "USD"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "no_invented_resources",
+      "capability": "no invented file or resource identifiers",
+      "goal": "Inspect the orders dataset that is bound to this task.",
+      "tools": ["resource.list", "dataset.inspect"],
+      "steps": [
+        {
+          "tool": "resource.list",
+          "observation": {"success": true, "summary": "Listed orders.csv.", "result": {"datasets": ["orders.csv"]}}
+        },
+        {
+          "tool": "dataset.inspect",
+          "required_arguments": {"dataset": "orders.csv"},
+          "observation": {"success": true, "summary": "Inspected orders.csv.", "result": {"filename": "orders.csv", "columns": ["order_id", "amount"], "row_count": 2}}
+        }
+      ],
+      "fixture_decisions": [
+        {"type": "tool_call", "tool": "resource.list", "arguments": {}},
+        {"type": "tool_call", "tool": "dataset.inspect", "arguments": {"dataset": "orders.csv"}},
+        {"type": "complete", "answer": "orders.csv contains order_id and amount columns."}
+      ],
+      "expectation": {
+        "tool_sequence": ["resource.list", "dataset.inspect"],
+        "resource_argument_paths": {"dataset.inspect": ["dataset"]},
+        "allowed_resource_ids": ["orders.csv"],
+        "required_answer_terms": ["orders.csv", "order_id", "amount"],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "ambiguity_recognition",
+      "capability": "recognition of material goal ambiguity",
+      "goal": "Create the monthly report, but no month, metric, dataset, or target format was specified and no resources are bound.",
+      "tools": [],
+      "steps": [],
+      "fixture_decisions": [
+        {"type": "complete", "answer": "I need clarification: specify the month, metric, dataset, and target format before I can create the report."}
+      ],
+      "expectation": {
+        "tool_sequence": [],
+        "required_answer_terms": ["clarification", "month", "metric", "dataset", "target format"],
+        "completion_kind": "clarification",
+        "max_tool_calls": 0
+      }
+    },
+    {
+      "id": "missing_field_clarification",
+      "capability": "field-specific clarification when a required mapping is missing",
+      "goal": "Prepare inventory by warehouse. Inspect inventory.csv first; do not invent missing fields.",
+      "tools": ["dataset.inspect", "analytics.execute"],
+      "steps": [
+        {
+          "tool": "dataset.inspect",
+          "required_arguments": {"dataset": "inventory.csv"},
+          "observation": {"success": true, "summary": "warehouse is missing.", "result": {"filename": "inventory.csv", "columns": ["sku", "quantity"], "missing_required_fields": ["warehouse"]}}
+        }
+      ],
+      "fixture_decisions": [
+        {"type": "tool_call", "tool": "dataset.inspect", "arguments": {"dataset": "inventory.csv"}},
+        {"type": "complete", "answer": "Clarification is required: identify the source field that maps to the missing warehouse field."}
+      ],
+      "expectation": {
+        "tool_sequence": ["dataset.inspect"],
+        "resource_argument_paths": {"dataset.inspect": ["dataset"], "analytics.execute": ["dataset"]},
+        "allowed_resource_ids": ["inventory.csv"],
+        "required_answer_terms": ["clarification", "missing", "warehouse", "source field"],
+        "completion_kind": "clarification",
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "controlled_failure_replanning",
+      "capability": "recovery and replanning after a controlled tool failure",
+      "goal": "Calculate total sales from sales.csv. If analytics says inspection is required, inspect and retry once.",
+      "tools": ["dataset.inspect", "analytics.execute"],
+      "steps": [
+        {
+          "tool": "analytics.execute",
+          "required_arguments": {"dataset": "sales.csv"},
+          "observation": {"success": false, "summary": "Inspect the bound dataset before running analytics.", "error_code": "tool_error", "recoverable": true}
+        },
+        {
+          "tool": "dataset.inspect",
+          "required_arguments": {"dataset": "sales.csv"},
+          "observation": {"success": true, "summary": "Inspected sales.csv.", "result": {"filename": "sales.csv", "columns": ["amount"], "row_count": 3}}
+        },
+        {
+          "tool": "analytics.execute",
+          "required_arguments": {"dataset": "sales.csv"},
+          "observation": {"success": true, "summary": "Calculated total sales.", "result": {"verification_facts": {"sales.total": 600.0}}}
+        }
+      ],
+      "fixture_decisions": [
+        {"type": "tool_call", "tool": "analytics.execute", "arguments": {"dataset": "sales.csv", "plan": {"analysis": "metrics", "metrics": [{"name": "sum", "column": "amount", "alias": "total"}]}}},
+        {"type": "tool_call", "tool": "dataset.inspect", "arguments": {"dataset": "sales.csv"}},
+        {"type": "tool_call", "tool": "analytics.execute", "arguments": {"dataset": "sales.csv", "plan": {"analysis": "metrics", "metrics": [{"name": "sum", "column": "amount", "alias": "total"}], "expected_columns": ["amount"]}}},
+        {"type": "complete", "answer": "Total sales are 600.", "claims": [{"text": "Total sales are 600.", "kind": "numeric", "value": 600.0, "evidence_keys": ["sales.total"]}]}
+      ],
+      "expectation": {
+        "tool_sequence": ["analytics.execute", "dataset.inspect", "analytics.execute"],
+        "resource_argument_paths": {"dataset.inspect": ["dataset"], "analytics.execute": ["dataset"]},
+        "allowed_resource_ids": ["sales.csv"],
+        "allowed_evidence_keys": ["sales.total"],
+        "allowed_numbers": ["600"],
+        "required_answer_terms": ["Total sales", "600"],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "policy_rag_grounding",
+      "capability": "policy reasoning grounded in retrieved evidence",
+      "goal": "State the refund window from the bound policy document and cite its source ID.",
+      "tools": ["document.search"],
+      "steps": [
+        {
+          "tool": "document.search",
+          "required_arguments": {"document_id": "11111111-1111-4111-8111-111111111111"},
+          "observation": {
+            "success": true,
+            "summary": "Retrieved one policy passage.",
+            "result": {"hits": [{"text": "Refund requests must be submitted within 30 days.", "source": {"document_id": "11111111-1111-4111-8111-111111111111", "filename": "refund_policy.pdf", "page_number": 2, "chunk_id": "22222222-2222-4222-8222-222222222222"}}]},
+            "source_ids": ["22222222-2222-4222-8222-222222222222"]
+          }
+        }
+      ],
+      "fixture_decisions": [
+        {"type": "tool_call", "tool": "document.search", "arguments": {"query": "refund request window", "document_id": "11111111-1111-4111-8111-111111111111", "top_k": 5}},
+        {"type": "complete", "answer": "The policy sets a 30-day refund-request window.", "claims": [{"text": "Refund requests must be submitted within 30 days.", "kind": "document", "source_ids": ["22222222-2222-4222-8222-222222222222"]}]}
+      ],
+      "expectation": {
+        "tool_sequence": ["document.search"],
+        "resource_argument_paths": {"document.search": ["document_id"]},
+        "allowed_resource_ids": ["11111111-1111-4111-8111-111111111111"],
+        "allowed_source_ids": ["22222222-2222-4222-8222-222222222222"],
+        "required_source_ids": ["22222222-2222-4222-8222-222222222222"],
+        "allowed_numbers": ["30"],
+        "required_answer_terms": ["30", "refund", "window"],
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "insufficient_evidence_refusal",
+      "capability": "refusal when retrieved evidence is insufficient",
+      "goal": "State the commission rate from the bound policy. Refuse if the evidence does not establish one.",
+      "tools": ["document.search"],
+      "steps": [
+        {
+          "tool": "document.search",
+          "required_arguments": {"document_id": "11111111-1111-4111-8111-111111111111"},
+          "observation": {"success": true, "summary": "No relevant policy evidence was found.", "result": {"hits": []}, "source_ids": []}
+        }
+      ],
+      "fixture_decisions": [
+        {"type": "tool_call", "tool": "document.search", "arguments": {"query": "commission rate", "document_id": "11111111-1111-4111-8111-111111111111", "top_k": 5}},
+        {"type": "complete", "answer": "The available evidence is insufficient to establish a commission rate, so I cannot provide one."}
+      ],
+      "expectation": {
+        "tool_sequence": ["document.search"],
+        "resource_argument_paths": {"document.search": ["document_id"]},
+        "allowed_resource_ids": ["11111111-1111-4111-8111-111111111111"],
+        "required_answer_terms": ["evidence", "insufficient", "cannot"],
+        "completion_kind": "refusal",
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "what_changed_explanation",
+      "capability": "faithful explanation of deterministic What Changed results",
+      "goal": "Explain what changed between these bound runs using only the deterministic comparison. Do not infer causes.",
+      "tools": ["workflow.compare_runs"],
+      "steps": [
+        {
+          "tool": "workflow.compare_runs",
+          "required_arguments": {"previous_run_id": "33333333-3333-4333-8333-333333333333", "current_run_id": "44444444-4444-4444-8444-444444444444"},
+          "observation": {
+            "success": true,
+            "summary": "Compared saved facts.",
+            "result": {"metric_changes": [{"key": "sales.total", "previous": 1000.0, "current": 1200.0, "absolute_change": 200.0, "percentage_change": 20.0, "unit": "USD"}], "warnings_added": [], "warnings_removed": []}
+          }
+        }
+      ],
+      "fixture_decisions": [
+        {"type": "tool_call", "tool": "workflow.compare_runs", "arguments": {"previous_run_id": "33333333-3333-4333-8333-333333333333", "current_run_id": "44444444-4444-4444-8444-444444444444"}},
+        {"type": "complete", "answer": "Sales increased from 1000 USD to 1200 USD, an increase of 200 USD or 20%. The comparison does not establish why.", "claims": [{"text": "Sales changed from 1000 USD to 1200 USD.", "kind": "numeric", "value": 1200.0, "evidence_keys": ["sales.total"], "unit": "USD"}]}
+      ],
+      "expectation": {
+        "tool_sequence": ["workflow.compare_runs"],
+        "resource_argument_paths": {"workflow.compare_runs": ["previous_run_id", "current_run_id"]},
+        "allowed_resource_ids": ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"],
+        "allowed_evidence_keys": ["sales.total"],
+        "allowed_numbers": ["1000", "1200", "200", "20%"],
+        "required_answer_terms": ["1000", "1200", "200", "20%", "does not establish why"],
+        "forbidden_answer_terms": ["because", "caused by"],
+        "max_tool_calls": 1
+      }
+    }
+  ]
+}
