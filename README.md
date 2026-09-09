@@ -59,7 +59,7 @@ $env:ORCHESTRATOR_BASE_URL = "https://api.openai.com/v1"
 
 The initial migration enables pgvector and creates every production table. The database role used for migration must be permitted to create the `vector` extension; the runtime should use a least-privilege role in a real deployment. For each schema change, create a new revision with `alembic revision -m "description"`, implement both directions, review generated SQL, and apply `alembic upgrade head`. Never edit a revision after it has been deployed.
 
-Alternatively, copy `.env.example` to `.env`, replace placeholders, set `APP_MODE=production`, and run `docker compose up`. Compose has a one-shot migration service and persistent volumes for PostgreSQL and artifact bodies. The controlled offline evaluation requires neither PostgreSQL nor an API key:
+Alternatively, follow [the deployment guide](docs/DEPLOYMENT.md) to set server-only secrets, set the browser-visible `NEXT_PUBLIC_API_URL` before building the frontend, and run the Compose stack. Compose has a one-shot migration service and persistent volumes for PostgreSQL and artifact bodies. The controlled offline evaluation requires neither PostgreSQL nor an API key:
 
 ```powershell
 cd backend

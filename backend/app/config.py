@@ -35,6 +35,7 @@ class Settings:
     orchestrator_input_cost_per_million: float | None
     orchestrator_output_cost_per_million: float | None
     allow_private_rest_targets: bool
+    cors_allowed_origins: tuple[str, ...]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -61,6 +62,7 @@ class Settings:
             orchestrator_input_cost_per_million=_optional_non_negative_float("ORCHESTRATOR_INPUT_COST_PER_MILLION"),
             orchestrator_output_cost_per_million=_optional_non_negative_float("ORCHESTRATOR_OUTPUT_COST_PER_MILLION"),
             allow_private_rest_targets=os.getenv("ALLOW_PRIVATE_REST_TARGETS", "").strip() == "1",
+            cors_allowed_origins=_http_origins("CORS_ALLOWED_ORIGINS"),
         )
         if settings.chunk_overlap >= settings.chunk_size:
             raise ConfigurationError("RETRIEVAL_CHUNK_OVERLAP must be smaller than RETRIEVAL_CHUNK_SIZE.")
@@ -154,6 +156,36 @@ def _optional_env(name: str) -> str | None:
     if value is None or not value.strip():
         return None
     return value.strip()
+
+
+def _http_origins(name: str) -> tuple[str, ...]:
+    raw = os.getenv(name, "http://localhost:3000,http://127.0.0.1:3000")
+    values = tuple(item.strip().rstrip("/") for item in raw.split(",") if item.strip())
+    if not values:
+        raise ConfigurationError(f"{name} must contain at least one HTTP(S) origin.")
+    if len(values) > 20 or len(values) != len(set(values)):
+        raise ConfigurationError(f"{name} must contain at most 20 unique origins.")
+    for value in values:
+        parsed = urlparse(value)
+        try:
+            port = parsed.port
+        except ValueError:
+            port = -1
+        if (
+            len(value) > 2048
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or port == -1
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ConfigurationError(
+                f"{name} entries must be HTTP(S) origins without credentials, paths, queries, or fragments."
+            )
+    return values
 
 
 @lru_cache

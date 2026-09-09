@@ -107,6 +107,31 @@ def test_orchestrator_settings_bound_provider_resource_controls(monkeypatch) -> 
     assert settings.orchestrator_output_cost_per_million == 8
 
 
+def test_cors_origins_are_explicit_bounded_and_credential_free(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "demo")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://workspace.example, http://localhost:3000/")
+    assert Settings.from_env().cors_allowed_origins == (
+        "https://workspace.example",
+        "http://localhost:3000",
+    )
+
+    for invalid in (
+        "*",
+        "https://user:secret@workspace.example",
+        "https://workspace.example/application",
+        "https://workspace.example?token=secret",
+        "https://workspace.example:not-a-port",
+        "https://workspace.example,https://workspace.example",
+    ):
+        monkeypatch.setenv("CORS_ALLOWED_ORIGINS", invalid)
+        try:
+            Settings.from_env()
+        except ConfigurationError as exc:
+            assert "secret" not in str(exc)
+        else:
+            raise AssertionError("Unsafe or ambiguous CORS origins must fail configuration validation.")
+
+
 def test_openai_provider_validates_structured_decisions_without_logging_credentials() -> None:
     responses = _Responses(ModelDecisionEnvelope(decision=ToolCall(tool="dataset.inspect", arguments={})))
     provider = OpenAIModelProvider(

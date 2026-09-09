@@ -23,12 +23,14 @@ from app.api.workflows import router as workflows_router, run_router as workflow
 from app.api.template_transforms import router as template_transforms_router
 from app.api.sources import router as sources_router
 from app.api.analytics import router as analytics_router
+from app.config import get_settings
+
 app = FastAPI(title="Agentic Intelligence Workspace")
 app.state.artifact_repository = None
 app.state.workflow_service = None
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=list(get_settings().cors_allowed_origins),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
