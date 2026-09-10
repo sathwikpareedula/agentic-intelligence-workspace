@@ -64,7 +64,7 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add task-scoped generalized dataset, retrieval, join, aggregation, artifact, and workflow tools plus controlled offline agent evaluations.
 - [ ] Run broader quality/cost evaluation against configured hosted orchestrator models.
 - [x] Add a native loopback-only Ollama provider and checkpointed/resumable product-model evaluation without changing the orchestrator or deterministic tool authority.
-- [ ] Run the `qwen3.5:4b` compatibility preflight and unchanged ten-case benchmark; select a local default only if reliability, safety, latency, and footprint evidence supports one.
+- [x] Run the `qwen3.5:4b` fixed-settings compatibility preflight; skip its ten-case benchmark after it fails to return a bounded decision within 60 seconds, and retain no local default rather than weakening the contract.
 - [x] Add durable production workflow repositories, artifact metadata/filesystem storage, and artifact download APIs.
 - [x] Turn August sales into the recruiter-facing north-star with schema discovery, policy-bound commissions, named-fact verification, join warnings/failures, a polished six-sheet workbook, structured execution stages, and schema-checked reruns.
 - [x] Add a dedicated controlled north-star evaluation covering outputs, evidence, failures, artifacts, and reproducibility.
