@@ -703,7 +703,7 @@ def general_task_tools(
             tools.append(
                 TypedTool(
                     "sales.north_star_report",
-                    "Use only after inspecting the three selected datasets and retrieving policy evidence. Deterministically clean completed August transactions, diagnose customer/target joins, analyze target performance and underperformance drivers, calculate policy-grounded commissions, generate professional charts and a management workbook, and save a schema-checked recipe.",
+                    "Use only after inspecting the three selected datasets and retrieving policy evidence. Deterministically clean completed transactions from one reporting month, diagnose customer/target joins, analyze target performance and underperformance drivers, calculate policy-grounded commissions, generate professional charts and a management workbook, and save a schema-checked recipe.",
                     GeneralSalesReportInput,
                     general_sales_report,
                 )
@@ -1074,7 +1074,7 @@ def sales_report_tool(artifact_repository: ArtifactRepository | None = None) -> 
 
     return TypedTool(
         "sales.august_report",
-        "Clean August transactions, compare regional targets, calculate cited commissions, and create a management workbook.",
+        "Clean one month of completed transactions, compare regional targets, calculate cited commissions, and create a management workbook.",
         SalesReportInput,
         report,
     )
@@ -1150,6 +1150,7 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
             "join_diagnostics": generated.join_diagnostics.model_dump(mode="json"),
             "target_join_diagnostics": generated.target_join_diagnostics,
             "data_quality": generated.data_quality,
+            "reporting_period": generated.reporting_period,
             "warnings": generated.warnings,
             "verification_facts": generated.verification_facts,
             "trace_metadata": {
@@ -1214,7 +1215,7 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
         ExecutionStage(
             name="Calculate commissions",
             status="completed",
-            explanation=f"Applied the cited {generated.commission_rate * 100:g}% policy rate to completed August net sales for {len(generated.commissions)} salespeople.",
+            explanation=f"Applied the cited {generated.commission_rate * 100:g}% policy rate to completed {generated.reporting_period} net sales for {len(generated.commissions)} salespeople.",
             tool_name="sales.north_star_report",
             row_counts={"salespeople": len(generated.commissions)},
             evidence_ids=source_ids,
@@ -1238,7 +1239,7 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
         )
     return ToolObservation(
         success=True,
-        summary=f"Prepared August report for {len(generated.regional_performance)} regions and {len(generated.commissions)} salespeople.",
+        summary=f"Prepared {generated.reporting_period} report for {len(generated.regional_performance)} regions and {len(generated.commissions)} salespeople.",
         result=result,
         artifact_ids=[str(generated.artifact.artifact_id)],
         source_ids=source_ids,

@@ -23,4 +23,4 @@ def write_pdf(path: Path, text: str) -> None:
 
 if __name__ == "__main__":
     write_pdf(Path(__file__).with_name("syllabus.pdf"), "Grading policy: An A requires at least 90%. The final exam is 30% of the course grade.")
-    write_pdf(Path(__file__).with_name("commission_policy.pdf"), "August commission policy: Salespeople earn a commission rate of 5% of completed net sales after discounts.")
+    write_pdf(Path(__file__).with_name("commission_policy.pdf"), "Monthly commission policy: Salespeople earn a commission rate of 5% of completed net sales after discounts.")

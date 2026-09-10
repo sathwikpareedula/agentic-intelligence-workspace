@@ -110,6 +110,8 @@ In the browser, choose **August sales report**, enter the goal, and upload:
 - `sample_data/sales_targets.csv` as targets; and
 - `sample_data/commission_policy.pdf` as policy evidence.
 
+After the initial report, select **Create First Run** to record the August baseline. Replace only the transactions upload with `sample_data/september_transactions.csv`, select **Run Again with Current Inputs**, and compare the two completed immutable runs in **What Changed?**. Then replace transactions with `sample_data/incompatible_transactions.csv`; the missing required `discount` column must create an inspectable blocked run instead of producing a report.
+
 The bounded orchestrator lists and inspects the authorized resources, identifies their roles from required columns rather than filenames, retrieves the commission rule with page/chunk provenance, and invokes `sales.north_star_report`. Deterministic code preserves the source frames, handles safe cleaning, rejects ambiguous duplicates and policy rules, reports join losses, computes every total/variance/commission, and emits named verification facts.
 
 The downloadable workbook contains **Executive Summary**, **Regional Performance**, **Salesperson Performance**, **Cleaned Transactions**, **Data Quality**, and **Provenance & Sources** sheets plus actual-vs-target, shortfall, and commission charts. The UI shows a user-facing Goal → Plan → Inspect → Retrieve → Clean → Join → Analyze → Calculate commissions → Generate workbook → Verify → Complete trace, citations, warnings, verification findings, and the saved recipe version. Reruns accept compatible replacement resources and fail on material schema drift.
