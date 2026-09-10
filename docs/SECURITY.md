@@ -52,6 +52,7 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - PostgreSQL credentials and the embedding-provider API key are read from environment variables and are not returned by API models or included in the example environment file as real values.
 - Orchestrator credentials are read from `ORCHESTRATOR_API_KEY` (with `OPENAI_API_KEY` as an explicit fallback). Base URLs with embedded credentials are rejected. Runtime diagnostics expose provider state and model name, never keys or credential-bearing URLs.
 - Hosted-provider exceptions, timeouts, malformed structured output, and connection failures map to stable error codes/messages without returning provider response bodies or request details.
+- The native Ollama provider requires a literal loopback base URL, appends only the fixed chat endpoint, requires no secret, bounds serialized context and output, validates every response against the existing strict decision schema, and maps transport/provider failures without logging prompt or response bodies. Remote Ollama endpoints are intentionally unsupported in V1.
 - Repository errors expose stable messages and do not include DSNs, database exception details, API keys, or hosted-provider response details. Alembic reads its connection URL from the environment.
 
 ### Cross-User Data Access
@@ -70,6 +71,7 @@ This is an early threat checklist. Every item below is a risk or design requirem
 - Risk: an orchestrator may invoke overly powerful tools or exceed the scope of the user's request.
 - Design requirements: give tools narrow typed interfaces and least privilege, enforce policy outside the model, separate read and write capabilities, apply budgets, and confirm destructive or unexpectedly broad actions.
 - Implemented: strict Pydantic tool contracts, explicit unknown/invalid-tool observations, trace body redaction, bounded loops, and no arbitrary code/SQL/shell tool.
+- Ollama decisions are additionally rejected at the adapter boundary when they name a tool outside the task-supplied tool set; evidence/source identifiers remain subject to the existing verifier and task-scoped evaluation checks.
 - Production agent tools are created per task and accept only bound dataset filenames, document IDs, and workflow IDs. Uploaded dataset bodies remain server-side and are not placed in model prompts or traces.
 - Task-scoped template tools require prior inspection of every selected resource. Saved template recipes pin mappings, transformation rules, and policy evidence; reruns can replace only source/template payloads and fail on role, schema, or structural template drift.
 - External PostgreSQL and REST tools accept secret *references* (environment variable names), never raw passwords or tokens. Workflow recipes persist host/database/table or sanitized URL plus secret-ref names. REST blocks loopback/private/metadata targets unless `ALLOW_PRIVATE_REST_TARGETS=1`. Agent tools can only use sources bound to the task.

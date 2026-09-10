@@ -48,6 +48,7 @@ Desktop.ini
 *.temp
 .cache/
 /backend/var/
+/var/ollama-eval/
 .pytest-tmp/
 
 *.tsbuildinfo

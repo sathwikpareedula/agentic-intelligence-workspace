@@ -15,13 +15,15 @@ Server-only variables belong on the backend or migration service:
 - `OPENAI_API_KEY` for hosted embeddings
 - `ORCHESTRATOR_API_KEY` (or the documented `OPENAI_API_KEY` fallback)
 - `ORCHESTRATOR_PROVIDER`, `ORCHESTRATOR_MODEL`, `ORCHESTRATOR_BASE_URL`
-- `ORCHESTRATOR_TIMEOUT_SECONDS`, `ORCHESTRATOR_MAX_RETRIES`, `ORCHESTRATOR_MAX_OUTPUT_TOKENS`
+- `ORCHESTRATOR_TIMEOUT_SECONDS`, `ORCHESTRATOR_MAX_RETRIES`, `ORCHESTRATOR_MAX_OUTPUT_TOKENS`, `ORCHESTRATOR_CONTEXT_TOKENS`
 - optional paired `ORCHESTRATOR_INPUT_COST_PER_MILLION` and `ORCHESTRATOR_OUTPUT_COST_PER_MILLION`
 - `CORS_ALLOWED_ORIGINS`, a comma-separated list of exact HTTP(S) frontend origins
 
 `NEXT_PUBLIC_API_URL` is different: it is intentionally browser-visible and compiled into the Next.js bundle at build time. Set it to the public URL a user's browser can reach, then rebuild the frontend. Never put API keys, database URLs, passwords, tokens, internal-only hostnames, or any other secret in a `NEXT_PUBLIC_*` variable.
 
 The checked-in `.env.example` contains placeholders only. Copy it to an untracked `.env`, replace every `replace-me`, and keep that file out of source control and image build contexts.
+
+`ORCHESTRATOR_PROVIDER=ollama` selects the native local adapter without a provider credential. Its base URL must be a literal loopback URL such as `http://127.0.0.1:11434/api`; start Ollama and pull the configured model separately on the backend host. The application never downloads model binaries. Hosted OpenAI orchestration remains available with `ORCHESTRATOR_PROVIDER=openai` and its existing credential requirements.
 
 ## Container path
 

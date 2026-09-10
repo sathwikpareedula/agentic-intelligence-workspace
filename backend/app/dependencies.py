@@ -4,6 +4,7 @@ from functools import lru_cache
 
 from fastapi import Depends, HTTPException, status
 
+from app.agent.providers import OllamaModelProvider, OpenAIModelProvider
 from app.agent.tools import ToolRegistry, dataset_tools, sales_report_tool, source_tools, template_transform_tool
 from app.config import ConfigurationError, Settings, get_settings
 from app.embeddings.deterministic import DeterministicEmbeddingProvider
@@ -181,3 +182,32 @@ def build_retrieval_service(settings: Settings) -> RetrievalService:
         get_embedding_provider(settings),
         settings.pdf_max_upload_bytes,
     )
+
+
+def build_orchestrator_provider(settings: Settings, tool_specifications: list[dict]):
+    """Construct the explicitly selected production orchestrator provider."""
+    if settings.orchestrator_provider == "openai":
+        if not settings.orchestrator_api_key:
+            raise _unavailable(
+                "ORCHESTRATOR_API_KEY or OPENAI_API_KEY is required for OpenAI task execution."
+            )
+        return OpenAIModelProvider(
+            settings.orchestrator_api_key,
+            settings.orchestrator_model,
+            tool_specifications,
+            settings.orchestrator_timeout_seconds,
+            settings.orchestrator_max_retries,
+            settings.orchestrator_base_url,
+            settings.orchestrator_max_output_tokens,
+        )
+    if settings.orchestrator_provider == "ollama":
+        return OllamaModelProvider(
+            settings.orchestrator_model,
+            tool_specifications,
+            settings.orchestrator_timeout_seconds,
+            settings.orchestrator_max_retries,
+            settings.orchestrator_base_url,
+            settings.orchestrator_max_output_tokens,
+            settings.orchestrator_context_tokens,
+        )
+    raise _unavailable("ORCHESTRATOR_PROVIDER must select 'openai' or 'ollama' for production task execution.")

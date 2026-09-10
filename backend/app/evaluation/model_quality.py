@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
-from statistics import mean
-from typing import Any, Literal, Protocol
+from statistics import mean, median
+from typing import Any, Callable, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agent.models import Complete, ModelDecision, ToolCall, ToolObservation
-from app.agent.providers import FakeModelProvider, ModelProvider, ModelProviderError, OpenAIModelProvider
+from app.agent.providers import (
+    FakeModelProvider,
+    ModelProvider,
+    ModelProviderError,
+    OllamaModelProvider,
+    OpenAIModelProvider,
+)
 from app.agent.tools import (
     BoundAnalyticsInput,
     BoundDatasetReferenceInput,
@@ -126,6 +133,40 @@ class OpenAIProviderFactory:
         )
 
 
+class OllamaProviderFactory:
+    provider_name = "ollama"
+    mode: Literal["live"] = "live"
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        timeout_seconds: float,
+        max_retries: int,
+        max_output_tokens: int,
+        context_tokens: int = 8192,
+        base_url: str | None = None,
+    ) -> None:
+        self.model_name = model
+        self._timeout_seconds = timeout_seconds
+        self._max_retries = max_retries
+        self._max_output_tokens = max_output_tokens
+        self._context_tokens = context_tokens
+        self._base_url = base_url
+
+    def create(self, case: ModelEvaluationCase, tool_specifications: list[dict[str, Any]]) -> ModelProvider:
+        del case
+        return OllamaModelProvider(
+            self.model_name,
+            tool_specifications,
+            self._timeout_seconds,
+            self._max_retries,
+            self._base_url,
+            self._max_output_tokens,
+            self._context_tokens,
+        )
+
+
 _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "resource.list": ResourceListInput,
     "dataset.inspect": BoundDatasetReferenceInput,
@@ -152,14 +193,66 @@ def evaluate_model_suite(
     input_cost_per_million: float | None = None,
     output_cost_per_million: float | None = None,
     judgments_path: Path | None = None,
+    checkpoint_path: Path | None = None,
+    evaluation_configuration: dict[str, Any] | None = None,
+    resume: bool = False,
+    progress: Callable[[int, int, str, bool, bool], None] | None = None,
 ) -> dict[str, Any]:
     suite = EvaluationSuite.model_validate_json(path.read_text(encoding="utf-8"))
     judgments = _load_judgments(judgments_path)
-    results = [_evaluate_case(case, factory) for case in suite.cases]
-    deterministic = _aggregate_deterministic(results)
+    if (checkpoint_path is None) != (evaluation_configuration is None):
+        raise ValueError("Checkpoint path and evaluation configuration must be supplied together.")
+    if resume and checkpoint_path is None:
+        raise ValueError("Resume requires a checkpoint path and evaluation configuration.")
+    results = (
+        _resume_results(checkpoint_path, evaluation_configuration, suite, factory)
+        if resume and checkpoint_path is not None and evaluation_configuration is not None
+        else []
+    )
+    results_by_id = {result["id"]: result for result in results}
+    for index, case in enumerate(suite.cases, start=1):
+        if case.id in results_by_id:
+            if progress:
+                progress(index, len(suite.cases), case.id, bool(results_by_id[case.id]["passed"]), True)
+            continue
+        result = _evaluate_case(case, factory)
+        results_by_id[case.id] = result
+        results = [results_by_id[item.id] for item in suite.cases if item.id in results_by_id]
+        report = _build_report(
+            suite,
+            factory,
+            results,
+            input_cost_per_million,
+            output_cost_per_million,
+            judgments,
+        )
+        if checkpoint_path is not None and evaluation_configuration is not None:
+            _write_checkpoint(checkpoint_path, evaluation_configuration, report)
+        if progress:
+            progress(index, len(suite.cases), case.id, bool(result["passed"]), False)
+    return _build_report(
+        suite,
+        factory,
+        results,
+        input_cost_per_million,
+        output_cost_per_million,
+        judgments,
+    )
+
+
+def _build_report(
+    suite: EvaluationSuite,
+    factory: ProviderFactory,
+    results: list[dict[str, Any]],
+    input_cost_per_million: float | None,
+    output_cost_per_million: float | None,
+    judgments: dict[str, HumanJudgment],
+) -> dict[str, Any]:
+    deterministic = _aggregate_deterministic(results, len(suite.cases))
     usage = _aggregate_usage(results, input_cost_per_million, output_cost_per_million)
     quality = _quality_judgment(results, judgments)
     return {
+        "status": "COMPLETE" if len(results) == len(suite.cases) else "PARTIAL",
         "suite_version": suite.version,
         "mode": factory.mode,
         "provider": factory.provider_name,
@@ -171,9 +264,91 @@ def evaluate_model_suite(
         "scope": (
             "Offline fixture-provider contract evaluation; no hosted request was made."
             if factory.mode == "offline"
-            else "Opt-in live model decision evaluation; deterministic tools are simulated from controlled observations."
+            else (
+                "Opt-in live local Ollama model decision evaluation; deterministic tools are simulated from controlled observations."
+                if factory.provider_name == "ollama"
+                else "Opt-in live hosted model decision evaluation; deterministic tools are simulated from controlled observations."
+            )
         ),
     }
+
+
+def evaluation_configuration(
+    path: Path,
+    factory: ProviderFactory,
+    *,
+    temperature: float,
+    max_output_tokens: int,
+    timeout_seconds: float,
+    max_retries: int,
+    context_tokens: int = 8192,
+) -> dict[str, Any]:
+    suite = EvaluationSuite.model_validate_json(path.read_text(encoding="utf-8"))
+    configuration: dict[str, Any] = {
+        "provider": factory.provider_name,
+        "model": factory.model_name,
+        "mode": factory.mode,
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "timeout_seconds": timeout_seconds,
+        "max_retries": max_retries,
+        "context_tokens": context_tokens,
+        "suite_version": suite.version,
+        "case_count": len(suite.cases),
+        "case_set_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+    encoded = json.dumps(configuration, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {**configuration, "fingerprint": hashlib.sha256(encoded).hexdigest()}
+
+
+def _resume_results(
+    path: Path,
+    configuration: dict[str, Any],
+    suite: EvaluationSuite,
+    factory: ProviderFactory,
+) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        checkpoint = json.loads(path.read_text(encoding="utf-8"))
+        stored_configuration = checkpoint["evaluation_configuration"]
+        reports = checkpoint["evaluations"]
+        if not isinstance(reports, list) or len(reports) != 1:
+            raise ValueError("Checkpoint must contain exactly one evaluation.")
+        report = reports[0]
+        results = report["cases"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("Evaluation checkpoint is malformed and cannot be resumed.") from exc
+    if stored_configuration != configuration:
+        raise ValueError("Evaluation checkpoint configuration differs; refusing unsafe resume.")
+    if report.get("provider") != factory.provider_name or report.get("model") != factory.model_name:
+        raise ValueError("Evaluation checkpoint provider or model differs; refusing unsafe resume.")
+    if not isinstance(results, list):
+        raise ValueError("Evaluation checkpoint cases are malformed and cannot be resumed.")
+    allowed_ids = {case.id for case in suite.cases}
+    result_ids = [result.get("id") for result in results if isinstance(result, dict)]
+    if len(result_ids) != len(results) or len(result_ids) != len(set(result_ids)) or not set(result_ids).issubset(allowed_ids):
+        raise ValueError("Evaluation checkpoint case identities are invalid and cannot be resumed.")
+    required = {"id", "passed", "deterministic_checks", "provider_calls", "provider_error"}
+    if any(not required.issubset(result) for result in results):
+        raise ValueError("Evaluation checkpoint contains incomplete case records.")
+    return results
+
+
+def _write_checkpoint(path: Path, configuration: dict[str, Any], report: dict[str, Any]) -> None:
+    payload = {
+        "status": report["status"],
+        "evaluation_configuration": configuration,
+        "evaluations": [report],
+    }
+    _atomic_write_json(path, payload)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def _evaluate_case(case: ModelEvaluationCase, factory: ProviderFactory) -> dict[str, Any]:
@@ -196,22 +371,18 @@ def _evaluate_case(case: ModelEvaluationCase, factory: ProviderFactory) -> dict[
     max_turns = max(2, min(25, len(case.steps) + 5))
 
     for _ in range(max_turns):
+        previous_metrics = getattr(provider, "last_call_metrics", None)
         try:
             decision = provider.decide(case.goal, observations)
         except ModelProviderError as exc:
+            _capture_case_metrics(provider, previous_metrics, call_metrics)
             provider_error = exc.code
             break
         except Exception:
+            _capture_case_metrics(provider, previous_metrics, call_metrics)
             provider_error = "provider_failure"
             break
-        metrics = getattr(provider, "last_call_metrics", None)
-        if metrics is not None:
-            call_metrics.append({
-                "latency_ms": metrics.latency_ms,
-                "input_tokens": metrics.input_tokens,
-                "output_tokens": metrics.output_tokens,
-                "total_tokens": metrics.total_tokens,
-            })
+        _capture_case_metrics(provider, previous_metrics, call_metrics)
         if isinstance(decision, Complete):
             completed = decision
             break
@@ -247,18 +418,57 @@ def _evaluate_case(case: ModelEvaluationCase, factory: ProviderFactory) -> dict[
         )
 
     scores = _score_case(case, calls, completed, next_step, provider_error)
+    case_input_tokens = _sum_available(call["input_tokens"] for call in call_metrics)
+    case_output_tokens = _sum_available(call["output_tokens"] for call in call_metrics)
     return {
         "id": case.id,
         "capability": case.capability,
+        "provider": factory.provider_name,
+        "model": factory.model_name,
         "passed": all(scores.values()),
         "deterministic_checks": scores,
+        "structured_output_valid": scores["structured_output_valid"],
+        "correct_tool_sequence": scores["correct_tool_sequence"],
+        "valid_structured_arguments": scores["valid_structured_arguments"],
+        "no_hallucinated_resources": scores["no_hallucinated_resources"],
+        "ambiguity_or_clarification_correct": (
+            scores["uncertainty_or_refusal_correct"]
+            if case.expectation.completion_kind == "clarification"
+            else None
+        ),
+        "grounding_or_refusal_correct": (
+            scores["evidence_faithful"] and scores["uncertainty_or_refusal_correct"]
+            if case.expectation.completion_kind == "refusal"
+            or case.expectation.allowed_source_ids
+            or case.expectation.required_source_ids
+            else None
+        ),
         "tool_sequence": [call["tool"] for call in calls],
         "invalid_tool_arguments": sum(not call["arguments_valid"] for call in calls),
         "hallucinated_tool_arguments": sum(bool(call["hallucinated_resources"]) for call in calls),
         "unnecessary_tool_calls": max(0, len(calls) - len(case.expectation.tool_sequence)),
         "provider_error": provider_error,
+        "latency_ms": sum(call["latency_ms"] for call in call_metrics) if call_metrics else None,
+        "input_tokens": case_input_tokens,
+        "output_tokens": case_output_tokens,
         "provider_calls": call_metrics,
     }
+
+
+def _capture_case_metrics(provider, previous, collected: list[dict[str, Any]]) -> None:
+    metrics = getattr(provider, "last_call_metrics", None)
+    if metrics is None or metrics is previous:
+        return
+    collected.append({
+        "latency_ms": metrics.latency_ms,
+        "input_tokens": metrics.input_tokens,
+        "output_tokens": metrics.output_tokens,
+        "total_tokens": metrics.total_tokens,
+        "load_duration_ms": metrics.load_duration_ms,
+        "prompt_eval_duration_ms": metrics.prompt_eval_duration_ms,
+        "output_eval_duration_ms": metrics.output_eval_duration_ms,
+        "output_tokens_per_second": metrics.output_tokens_per_second,
+    })
 
 
 def _case_tool_models(case: ModelEvaluationCase) -> dict[str, type[BaseModel]]:
@@ -374,17 +584,33 @@ def _numeric_claim_allowed(value: float, allowed: set[str]) -> bool:
     return any(_normalize_number(candidate) in allowed for candidate in candidates)
 
 
-def _aggregate_deterministic(results: list[dict[str, Any]]) -> dict[str, Any]:
+def _aggregate_deterministic(results: list[dict[str, Any]], expected_case_count: int | None = None) -> dict[str, Any]:
+    if not results:
+        return {
+            "case_count": expected_case_count or 0,
+            "completed_case_count": 0,
+            "remaining_case_count": expected_case_count or 0,
+            "passed_count": 0,
+            "failed_count": 0,
+            "task_success_rate": None,
+            "check_rates": {},
+            "invalid_tool_arguments": 0,
+            "hallucinated_tool_arguments": 0,
+            "unnecessary_tool_calls": 0,
+        }
     checks = list(results[0]["deterministic_checks"])
-    case_count = len(results)
+    completed_case_count = len(results)
+    case_count = expected_case_count or completed_case_count
     passed = sum(result["passed"] for result in results)
     return {
         "case_count": case_count,
+        "completed_case_count": completed_case_count,
+        "remaining_case_count": case_count - completed_case_count,
         "passed_count": passed,
-        "failed_count": case_count - passed,
-        "task_success_rate": passed / case_count,
+        "failed_count": completed_case_count - passed,
+        "task_success_rate": passed / completed_case_count,
         "check_rates": {
-            check: sum(result["deterministic_checks"][check] for result in results) / case_count
+            check: sum(result["deterministic_checks"][check] for result in results) / completed_case_count
             for check in checks
         },
         "invalid_tool_arguments": sum(result["invalid_tool_arguments"] for result in results),
@@ -403,6 +629,22 @@ def _aggregate_usage(
     input_tokens = _sum_available(call["input_tokens"] for call in calls)
     output_tokens = _sum_available(call["output_tokens"] for call in calls)
     total_tokens = _sum_available(call["total_tokens"] for call in calls)
+    load_durations = [call["load_duration_ms"] for call in calls if call["load_duration_ms"] is not None]
+    prompt_durations = [
+        call["prompt_eval_duration_ms"]
+        for call in calls
+        if call["prompt_eval_duration_ms"] is not None
+    ]
+    output_durations = [
+        call["output_eval_duration_ms"]
+        for call in calls
+        if call["output_eval_duration_ms"] is not None
+    ]
+    output_rates = [
+        call["output_tokens_per_second"]
+        for call in calls
+        if call["output_tokens_per_second"] is not None
+    ]
     cost = None
     if input_cost_per_million is not None and output_cost_per_million is not None:
         if input_tokens is not None and output_tokens is not None:
@@ -414,9 +656,16 @@ def _aggregate_usage(
         "measured_call_count": len(calls),
         "latency_ms_total": sum(latencies) if latencies else None,
         "latency_ms_mean": mean(latencies) if latencies else None,
+        "latency_ms_median": median(latencies) if latencies else None,
+        "latency_ms_p95": _nearest_rank_percentile(latencies, 0.95) if latencies else None,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
+        "load_duration_ms_total": sum(load_durations) if load_durations else None,
+        "load_duration_ms_max": max(load_durations) if load_durations else None,
+        "prompt_eval_duration_ms_total": sum(prompt_durations) if prompt_durations else None,
+        "output_eval_duration_ms_total": sum(output_durations) if output_durations else None,
+        "output_tokens_per_second_mean": mean(output_rates) if output_rates else None,
         "approximate_cost_usd": cost,
         "cost_basis": (
             {
@@ -435,6 +684,12 @@ def _sum_available(values) -> int | None:
     if not items or any(item is None for item in items):
         return None
     return sum(items)
+
+
+def _nearest_rank_percentile(values: list[float], quantile: float) -> float:
+    ordered = sorted(values)
+    rank = max(1, int(len(ordered) * quantile + 0.999999999))
+    return ordered[min(rank, len(ordered)) - 1]
 
 
 def _load_judgments(path: Path | None) -> dict[str, HumanJudgment]:
@@ -474,7 +729,22 @@ def _positive_float(value: str) -> float:
     return parsed
 
 
-def _live_factories(args) -> list[OpenAIProviderFactory]:
+def _live_factories(args) -> list[ProviderFactory]:
+    models = args.model or [item.strip() for item in os.getenv("MODEL_EVAL_MODELS", "").split(",") if item.strip()]
+    if not models:
+        raise SystemExit("Live evaluation requires at least one --model or MODEL_EVAL_MODELS value.")
+    if args.provider == "ollama":
+        return [
+            OllamaProviderFactory(
+                model=model,
+                timeout_seconds=args.timeout_seconds,
+                max_retries=args.max_retries,
+                max_output_tokens=args.max_output_tokens,
+                context_tokens=args.context_tokens,
+                base_url=args.base_url or os.getenv("ORCHESTRATOR_BASE_URL"),
+            )
+            for model in models
+        ]
     api_key = (
         os.getenv("MODEL_EVAL_API_KEY")
         or os.getenv("ORCHESTRATOR_API_KEY")
@@ -484,9 +754,6 @@ def _live_factories(args) -> list[OpenAIProviderFactory]:
         raise SystemExit(
             "Live evaluation requires MODEL_EVAL_API_KEY, ORCHESTRATOR_API_KEY, or OPENAI_API_KEY."
         )
-    models = args.model or [item.strip() for item in os.getenv("MODEL_EVAL_MODELS", "").split(",") if item.strip()]
-    if not models:
-        raise SystemExit("Live evaluation requires at least one --model or MODEL_EVAL_MODELS value.")
     return [
         OpenAIProviderFactory(
             api_key=api_key,
@@ -504,46 +771,88 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate workspace-specific model planning and evidence behavior.")
     parser.add_argument("path", type=Path, help="Path to model evaluation scenarios JSON.")
     parser.add_argument("--mode", choices=("offline", "live"), default="offline")
-    parser.add_argument("--provider", choices=("openai",), default="openai")
+    parser.add_argument("--provider", choices=("ollama", "openai"), default="openai")
     parser.add_argument("--model", action="append", help="Live model name; repeat to compare models.")
-    parser.add_argument("--base-url", help="Optional Responses-compatible HTTP(S) base URL.")
+    parser.add_argument("--base-url", help="Optional provider base URL; Ollama accepts loopback URLs only.")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--max-output-tokens", type=int, default=3000)
+    parser.add_argument("--context-tokens", type=int, default=8192, help="Bounded Ollama context window.")
     parser.add_argument("--input-cost-per-million", type=_positive_float)
     parser.add_argument("--output-cost-per-million", type=_positive_float)
     parser.add_argument("--judgments", type=Path, help="Optional human model-quality judgments JSON.")
     parser.add_argument("--output", type=Path, help="Optional JSON report path.")
+    parser.add_argument("--quiet", action="store_true", help="Suppress JSON stdout; requires --output.")
+    parser.add_argument("--progress", action="store_true", help="Print one concise line as each case is checkpointed.")
+    parser.add_argument("--resume", action="store_true", help="Resume an identical single-model evaluation checkpoint.")
     args = parser.parse_args()
     if (args.input_cost_per_million is None) != (args.output_cost_per_million is None):
         parser.error("Supply both input and output cost rates, or neither.")
+    if args.provider == "ollama" and args.input_cost_per_million is not None:
+        parser.error("Local Ollama evaluation does not accept invented monetary token rates.")
+    if args.quiet and args.output is None:
+        parser.error("--quiet requires --output.")
+    if args.progress and args.output is None:
+        parser.error("--progress requires --output so completed cases are checkpointed.")
+    if args.resume and args.output is None:
+        parser.error("--resume requires --output.")
     if not 0 < args.timeout_seconds <= 120:
         parser.error("Timeout must be greater than zero and at most 120 seconds.")
     if not 0 <= args.max_retries <= 5:
         parser.error("Retries must be between zero and five.")
     if not 0 < args.max_output_tokens <= 20_000:
         parser.error("Output tokens must be between 1 and 20,000.")
+    if not 2048 <= args.context_tokens <= 131_072:
+        parser.error("Context tokens must be between 2,048 and 131,072.")
+    if args.provider == "ollama" and args.max_output_tokens >= args.context_tokens:
+        parser.error("Ollama output tokens must be smaller than the context window.")
 
     factories: list[ProviderFactory]
     if args.mode == "offline":
         factories = [FixtureProviderFactory()]
     else:
         factories = _live_factories(args)
-    reports = [
-        evaluate_model_suite(
+    if args.resume and len(factories) != 1:
+        parser.error("--resume supports exactly one model per checkpoint.")
+    if args.output and args.output.exists() and not args.resume:
+        parser.error("Output already exists; use --resume only when its configuration is identical.")
+
+    def report_progress(index: int, total: int, case_id: str, passed: bool, resumed: bool) -> None:
+        state = "already complete" if resumed else ("passed" if passed else "failed")
+        print(f"case {index}/{total} {state}: {case_id}", flush=True)
+
+    reports: list[dict[str, Any]] = []
+    for factory in factories:
+        configuration = evaluation_configuration(
+            args.path,
+            factory,
+            temperature=0,
+            max_output_tokens=args.max_output_tokens,
+            timeout_seconds=args.timeout_seconds,
+            max_retries=args.max_retries,
+            context_tokens=args.context_tokens,
+        )
+        report = evaluate_model_suite(
             args.path,
             factory,
             input_cost_per_million=args.input_cost_per_million,
             output_cost_per_million=args.output_cost_per_million,
             judgments_path=args.judgments,
+            checkpoint_path=args.output if len(factories) == 1 else None,
+            evaluation_configuration=configuration if len(factories) == 1 and args.output else None,
+            resume=args.resume,
+            progress=report_progress if args.progress else None,
         )
-        for factory in factories
-    ]
-    result: dict[str, Any] = {"evaluations": reports}
+        reports.append(report)
+    result: dict[str, Any] = {
+        "status": "COMPLETE" if all(report["status"] == "COMPLETE" for report in reports) else "PARTIAL",
+        "evaluations": reports,
+    }
     rendered = json.dumps(result, indent=2)
-    print(rendered)
-    if args.output:
-        args.output.write_text(rendered + "\n", encoding="utf-8")
+    if args.output and len(factories) != 1:
+        _atomic_write_json(args.output, result)
+    if not args.quiet:
+        print(rendered)
     if any(report["deterministic_checks"]["failed_count"] for report in reports):
         raise SystemExit(1)
 

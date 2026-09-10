@@ -9,9 +9,9 @@ import httpx
 from openai import APITimeoutError, OpenAIError
 
 from app.agent.models import Complete, ModelDecisionEnvelope, ToolCall
-from app.agent.providers import OpenAIModelProvider
+from app.agent.providers import OllamaModelProvider, OpenAIModelProvider
 from app.config import ConfigurationError, Settings, get_settings
-from app.dependencies import _demo_repository, _deterministic_provider
+from app.dependencies import _demo_repository, _deterministic_provider, build_orchestrator_provider
 from app.main import app
 
 
@@ -105,6 +105,39 @@ def test_orchestrator_settings_bound_provider_resource_controls(monkeypatch) -> 
     settings = Settings.from_env()
     assert settings.orchestrator_input_cost_per_million == 2
     assert settings.orchestrator_output_cost_per_million == 8
+
+
+def test_ollama_settings_are_keyless_local_and_reject_remote_or_cost_configuration(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "production")
+    monkeypatch.setenv("ORCHESTRATOR_PROVIDER", "ollama")
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "gemma3:4b")
+    monkeypatch.delenv("ORCHESTRATOR_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ORCHESTRATOR_BASE_URL", raising=False)
+
+    settings = Settings.from_env()
+    provider = build_orchestrator_provider(settings, [])
+    assert settings.orchestrator_api_key is None
+    assert isinstance(provider, OllamaModelProvider)
+    assert provider.model_name == "gemma3:4b"
+
+    monkeypatch.setenv("ORCHESTRATOR_BASE_URL", "http://metadata.google.internal:11434/api")
+    try:
+        Settings.from_env()
+    except ConfigurationError as exc:
+        assert "loopback Ollama" in str(exc)
+    else:
+        raise AssertionError("Remote Ollama URLs must fail closed.")
+
+    monkeypatch.setenv("ORCHESTRATOR_BASE_URL", "http://localhost:11434/api")
+    monkeypatch.setenv("ORCHESTRATOR_INPUT_COST_PER_MILLION", "0")
+    monkeypatch.setenv("ORCHESTRATOR_OUTPUT_COST_PER_MILLION", "0")
+    try:
+        Settings.from_env()
+    except ConfigurationError as exc:
+        assert "monetary token rates" in str(exc)
+    else:
+        raise AssertionError("Local execution must not report invented monetary cost.")
 
 
 def test_cors_origins_are_explicit_bounded_and_credential_free(monkeypatch) -> None:
@@ -307,7 +340,16 @@ def test_runtime_reports_demo_configured_and_unavailable_provider_states(monkeyp
     assert configured["orchestrator_status"] == "configured"
     assert "secret" not in str(configured)
 
+    monkeypatch.setenv("ORCHESTRATOR_PROVIDER", "ollama")
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "gemma3:4b")
     monkeypatch.delenv("ORCHESTRATOR_API_KEY")
+    _clear_runtime_caches()
+    local = client.get("/runtime").json()
+    assert local["orchestrator_provider"] == "ollama"
+    assert local["orchestrator_status"] == "configured"
+    assert local["orchestrator_model"] == "gemma3:4b"
+
+    monkeypatch.setenv("ORCHESTRATOR_PROVIDER", "openai")
     monkeypatch.delenv("OPENAI_API_KEY")
     _clear_runtime_caches()
     unavailable = client.get("/runtime").json()

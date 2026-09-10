@@ -9,7 +9,7 @@ This project turns natural-language goals over structured data and unstructured 
 - CSV/XLSX inspection, profiling, transformations, joins, aggregations, derivations, and safe exports.
 - PDF extraction, deterministic chunking, provider/repository abstractions, ranked retrieval, and citations.
 - One bounded observe/replan orchestrator with strict arguments, redacted traces, explicit errors, and iteration limits.
-- Environment-configured OpenAI-compatible Responses provider with strict structured decisions, bounded output, timeouts, retries, safe provider errors, and optional base URL.
+- Environment-configured OpenAI Responses and native local Ollama providers with strict structured decisions, bounded context/output, timeouts, retries, and safe provider errors.
 - Task-scoped general tools for dataset inspection/profiling, transformations, joins, aggregations, artifact exports, grounded document retrieval, and authorized workflow reruns.
 - `grades.csv` + `syllabus.pdf` mixed reasoning with a deterministic required-final calculator.
 - Numeric/citation verification and versioned deterministic recipes with schema-drift checks.
@@ -73,6 +73,21 @@ cd backend
 .\.venv\Scripts\python.exe -m app.evaluation.workflow_runs ..\evals\workflow_run_cases.json
 .\.venv\Scripts\python.exe -m app.evaluation.recurring_sales ..\evals\recurring_sales_cases.json
 ```
+
+For local orchestration, start Ollama separately and select it explicitly. The application never pulls a model automatically and accepts only a loopback Ollama endpoint:
+
+```powershell
+$model = "replace-with-a-compatible-model-tag"
+ollama pull $model
+ollama serve
+$env:APP_MODE = "production"
+$env:ORCHESTRATOR_PROVIDER = "ollama"
+$env:ORCHESTRATOR_BASE_URL = "http://127.0.0.1:11434/api"
+$env:ORCHESTRATOR_MODEL = $model
+$env:ORCHESTRATOR_CONTEXT_TOKENS = "8192"
+```
+
+Ollama orchestration requires no provider secret. No local model is currently designated as the default; runtime compatibility, hardware feasibility, and product-quality evidence are tracked separately in `docs/MODEL_EVALUATION.md`. Production persistence and hosted embeddings retain their own existing database and credential requirements.
 
 All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. Source and analytics evaluations exercise the bounded connector and typed-computation contracts. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database unless the source evaluator receives an explicit isolated `TEST_DATABASE_URL`.
 

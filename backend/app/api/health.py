@@ -87,13 +87,14 @@ def _diagnostics(settings: Settings, *, probe: bool = False) -> RuntimeDiagnosti
         limitations.append(f"Embedding provider '{settings.embedding_provider}' is unsupported in production mode.")
     elif not settings.openai_api_key:
         limitations.append("OPENAI_API_KEY is not configured for embeddings.")
-    if settings.orchestrator_provider != "openai":
-        limitations.append("ORCHESTRATOR_PROVIDER must be 'openai' for production task execution.")
-    elif not settings.orchestrator_api_key:
+    if settings.orchestrator_provider == "none":
+        limitations.append("ORCHESTRATOR_PROVIDER must select 'openai' or 'ollama' for production task execution.")
+    elif settings.orchestrator_provider == "openai" and not settings.orchestrator_api_key:
         limitations.append("ORCHESTRATOR_API_KEY or OPENAI_API_KEY is not configured for orchestration.")
     orchestrator_status = (
         "configured"
-        if settings.orchestrator_provider == "openai" and settings.orchestrator_api_key
+        if settings.orchestrator_provider == "ollama"
+        or (settings.orchestrator_provider == "openai" and settings.orchestrator_api_key)
         else "unavailable"
     )
     storage_status = _artifact_storage_status(settings.artifact_storage_path) if probe else "available"
