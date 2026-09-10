@@ -45,7 +45,7 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
                     tool="dataset.inspect",
                     arguments={
                         "filename": "data.csv",
-                        "content_base64": base64.b64encode(b"id\n1\n").decode("ascii"),
+                        "content_base64": base64.b64encode(b"id\n1\n2\n").decode("ascii"),
                     },
                     expected_columns=["id"],
                 )
@@ -123,7 +123,7 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
     reason="Set ALLOW_DATABASE_INTEGRATION_TESTS=1 and TEST_DATABASE_URL for an isolated project test database.",
 )
 def test_external_postgres_connector_is_read_only_and_importable() -> None:
-    from urllib.parse import urlparse
+    from urllib.parse import unquote, urlparse
 
     from app.models.sources import PostgresTableRef
     from app.models.analytics import AnalyticsSqlRequest
@@ -133,7 +133,12 @@ def test_external_postgres_connector_is_read_only_and_importable() -> None:
 
     database_url = os.environ["TEST_DATABASE_URL"]
     parsed = urlparse(database_url)
-    password = parsed.password or ""
+    prior_password = os.getenv("EXTERNAL_PG_PASSWORD")
+    password = unquote(parsed.password) if parsed.password is not None else (prior_password or "")
+    if not password:
+        pytest.fail(
+            "Provide the isolated database password in TEST_DATABASE_URL or EXTERNAL_PG_PASSWORD."
+        )
     os.environ["EXTERNAL_PG_PASSWORD"] = password
     with psycopg.connect(database_url) as connection:
         connection.execute("CREATE SCHEMA IF NOT EXISTS external_demo")
@@ -180,7 +185,10 @@ def test_external_postgres_connector_is_read_only_and_importable() -> None:
         with pytest.raises(Exception):
             import_source(PostgresImportRequest(source=config, select_sql="INSERT INTO external_demo.orders VALUES ('x')"))
     finally:
-        os.environ.pop("EXTERNAL_PG_PASSWORD", None)
+        if prior_password is None:
+            os.environ.pop("EXTERNAL_PG_PASSWORD", None)
+        else:
+            os.environ["EXTERNAL_PG_PASSWORD"] = prior_password
         with psycopg.connect(database_url) as connection:
             connection.execute("DROP TABLE IF EXISTS external_demo.orders")
             connection.execute("DROP SEQUENCE IF EXISTS external_demo.review_sequence")

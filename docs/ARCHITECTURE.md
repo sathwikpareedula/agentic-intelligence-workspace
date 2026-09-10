@@ -22,7 +22,7 @@ PostgreSQL + pgvector / File storage
 Artifacts and trace
 ```
 
-All layers in the diagram have initial implementations. Local live database/provider verification, multi-user controls, pooling, retention, object storage, and production operations remain incomplete.
+All layers in the diagram have initial implementations. PostgreSQL/pgvector persistence and exact vector search have been live-verified against an isolated local database. Hosted-provider execution, multi-user controls, pooling, retention, object storage, and production operations remain incomplete.
 
 ## Responsibilities
 

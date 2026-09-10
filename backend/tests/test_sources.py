@@ -32,9 +32,16 @@ from app.repositories.documents import InMemoryDocumentRepository
 from app.services.template_transforms import execute_transform, propose_transform
 from app.models.template_transforms import FilePayload, SourcePayload, TransformExecutionRequest, TransformProposalRequest
 from app.services.workflows import InMemoryWorkflowRepository, WorkflowService
+from app.evaluation.sources import _database_password
 
 
 client = TestClient(app)
+
+
+def test_live_source_evaluation_uses_encoded_url_or_environment_password() -> None:
+    assert _database_password("p%40ss%3Aword", "ignored") == "p@ss:word"
+    assert _database_password(None, "environment-secret") == "environment-secret"
+    assert _database_password(None, None) == ""
 
 
 def _parquet_bytes(rows: list[dict]) -> bytes:

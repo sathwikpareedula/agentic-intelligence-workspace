@@ -54,6 +54,30 @@ $env:APP_MODE = "production"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+### Isolated local PostgreSQL/pgvector verification
+
+Use a dedicated database and restricted role; never point integration tests at a shared or user-data database. Install pgvector for the server version, then enable `CREATE EXTENSION vector` only in the isolated database. Keep the password out of command history and connection URLs by using the platform's local secret facility (for example, a user-only `PGPASSFILE` on Windows).
+
+From `backend`, set temporary process variables and run the migration plus gated integration contract:
+
+```powershell
+$env:PGPASSFILE = "path-to-user-only-password-file"
+$env:DATABASE_URL = "postgresql://PROJECT_ROLE@127.0.0.1:5432/ISOLATED_DATABASE"
+$env:TEST_DATABASE_URL = $env:DATABASE_URL
+$env:ALLOW_DATABASE_INTEGRATION_TESTS = "1"
+.\.venv\Scripts\alembic.exe upgrade head
+.\.venv\Scripts\alembic.exe current
+.\.venv\Scripts\python.exe -m pytest -q tests\test_postgres_integration.py
+```
+
+The live source evaluation also requires `EXTERNAL_PG_PASSWORD` to be supplied to that process through a local secret mechanism. Do not persist it in the repository or print it:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.evaluation.sources ..\evals\source_cases.json
+```
+
+The integration test creates uniquely identified rows and removes them in `finally` blocks. It validates database readiness, real pgvector insertion and exact cosine search, document filtering, transaction rollback, durable workflow/run/artifact/execution reloads, catalog reads, and read-only enforcement.
+
 Build the frontend only after setting its public API URL:
 
 ```powershell

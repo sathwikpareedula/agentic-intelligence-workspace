@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
 from threading import Thread
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -261,7 +261,11 @@ def _postgres_live() -> dict[str, bool]:
     import psycopg
 
     parsed = urlparse(url)
-    os.environ["EXTERNAL_PG_PASSWORD"] = parsed.password or ""
+    prior_password = os.getenv("EXTERNAL_PG_PASSWORD")
+    password = _database_password(parsed.password, prior_password)
+    if not password:
+        return {"metadata": False, "read": False, "redaction": False}
+    os.environ["EXTERNAL_PG_PASSWORD"] = password
     config = PostgresSourceConfig(
         host=parsed.hostname or "127.0.0.1",
         port=parsed.port or 5432,
@@ -283,12 +287,15 @@ def _postgres_live() -> dict[str, bool]:
             PostgresImportRequest(source=config, table=PostgresTableRef(schema="external_demo", table="eval_orders"))
         )
         read = imported.inspection.row_count == 1
-        redaction = (parsed.password or "no-password") not in imported.model_dump_json()
+        redaction = password not in imported.model_dump_json()
         return {"metadata": metadata, "read": read, "redaction": redaction}
     except Exception:
         return {"metadata": False, "read": False, "redaction": False}
     finally:
-        os.environ.pop("EXTERNAL_PG_PASSWORD", None)
+        if prior_password is None:
+            os.environ.pop("EXTERNAL_PG_PASSWORD", None)
+        else:
+            os.environ["EXTERNAL_PG_PASSWORD"] = prior_password
         try:
             import psycopg
 
@@ -297,6 +304,13 @@ def _postgres_live() -> dict[str, bool]:
                 connection.commit()
         except Exception:
             pass
+
+
+def _database_password(url_password: str | None, environment_password: str | None) -> str:
+    """Resolve live-evaluation credentials without logging or persisting them."""
+    if url_password is not None:
+        return unquote(url_password)
+    return environment_password or ""
 
 
 def main() -> None:

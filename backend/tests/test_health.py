@@ -2,6 +2,7 @@
 
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from app.main import app
 
 client = TestClient(app)
@@ -16,13 +17,18 @@ def test_health() -> None:
     assert response.headers["x-request-id"]
 
 
-def test_readiness_and_request_id_propagation() -> None:
-    response = client.get("/ready", headers={"x-request-id": "test-request-123"})
-    assert response.status_code == 503
-    assert response.json()["status"] == "not_ready"
-    assert response.json()["mode"] == "production"
-    assert "DATABASE_URL is not configured." in response.json()["limitations"]
-    assert response.headers["x-request-id"] == "test-request-123"
+def test_readiness_and_request_id_propagation(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    get_settings.cache_clear()
+    try:
+        response = client.get("/ready", headers={"x-request-id": "test-request-123"})
+        assert response.status_code == 503
+        assert response.json()["status"] == "not_ready"
+        assert response.json()["mode"] == "production"
+        assert "DATABASE_URL is not configured." in response.json()["limitations"]
+        assert response.headers["x-request-id"] == "test-request-123"
+    finally:
+        get_settings.cache_clear()
 
 
 def test_runtime_diagnostics_do_not_expose_secrets() -> None:
