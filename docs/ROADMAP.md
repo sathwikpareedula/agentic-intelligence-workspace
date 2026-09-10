@@ -45,7 +45,8 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add controlled retrieval evaluation with per-query rankings, Hit@K, and MRR.
 - [x] Add Alembic-managed production schema and PostgreSQL persistence for retrieval, workflows, artifacts, and execution provenance.
 - [x] Add an opt-in isolated PostgreSQL/pgvector integration test and CI service-container path.
-- [ ] Verify PostgreSQL/pgvector and hosted embeddings against live local infrastructure.
+- [x] Verify PostgreSQL/pgvector persistence, exact cosine retrieval, and the bounded source connector against isolated local infrastructure.
+- [ ] Verify hosted embeddings against a configured live provider.
 - [ ] Add OCR, tenant isolation, retention, connection pooling, and mature production database operations controls.
 
 ## LATER
