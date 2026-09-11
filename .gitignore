@@ -49,6 +49,7 @@ Desktop.ini
 .cache/
 /backend/var/
 /var/ollama-eval/
+/var/model-eval/
 .pytest-tmp/
 
 *.tsbuildinfo

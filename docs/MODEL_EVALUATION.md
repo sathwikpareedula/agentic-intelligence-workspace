@@ -36,9 +36,11 @@ Set a credential only in the process environment. `MODEL_EVAL_API_KEY` is prefer
 ```powershell
 $env:MODEL_EVAL_API_KEY = "..."
 .\.venv\Scripts\python.exe -m app.evaluation.model_quality ..\evals\model_cases.json `
-  --mode live `
+  --mode live --provider openai `
   --model "MODEL_NAME" `
-  --output ..\var\model-eval.json
+  --timeout-seconds 30 --max-retries 1 --max-output-tokens 1200 `
+  --output ..\var\model-eval\hosted.json `
+  --quiet --progress
 ```
 
 The command does not require PostgreSQL. It uses the same strict OpenAI Responses adapter, timeout, retry, structured-output, and output-token boundaries as production orchestration. A custom base URL must be Responses-compatible; configuration does not imply compatibility.
@@ -52,7 +54,7 @@ Repeat `--model` to compare models in one report:
   --model "MODEL_B"
 ```
 
-No model is hard-coded as best. Each result records task success, structured validity, tool sequence, invalid or hallucinated arguments, unnecessary calls, evidence faithfulness, uncertainty/refusal correctness, latency, and provider token usage when returned.
+No model is hard-coded as best. Each case records an explicit scenario name, task success, structured validity, tool sequence, invalid or hallucinated arguments, unnecessary calls, evidence faithfulness, uncertainty/refusal correctness, latency, provider token usage when returned, and a stable sanitized failure reason when the provider fails. Reports under `var/model-eval` are generated local evidence and are ignored by Git.
 
 ## Opt-in local Ollama evaluation
 
@@ -118,7 +120,7 @@ Scores use a 1–5 rubric for semantic usefulness, clarity, and appropriate unce
 ## Security and interpretation boundaries
 
 - API keys come only from environment variables and are not included in reports.
-- Provider errors are reduced to stable error codes; response bodies and credential-bearing request details are not reported.
+- Provider errors are reduced to stable error codes and sanitized reasons; response bodies and credential-bearing request details are not reported.
 - Token counts and latency are non-sensitive aggregate metadata, not prompt or evidence content.
 - Live calls are never automatic in tests or CI.
 - Ollama endpoints are restricted to literal loopback URLs in V1; no API key or invented monetary rate is accepted for local evaluation.

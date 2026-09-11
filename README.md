@@ -100,6 +100,23 @@ npm.cmd run dev
 
 Open `http://localhost:3000` and choose **Reusable monthly sales workflow**. `APP_MODE=demo` uses process-local repositories and deterministic token-hash embeddings; it does not call a hosted model.
 
+## Execution modes
+
+**Demo mode** is the default recruiter path above: it is deterministic, credential-free, and reproducible. **Live model mode** uses the same typed tool contracts and deterministic calculation tools, but lets a configured OpenAI Responses-compatible provider drive the bounded orchestration loop. Production mode also requires migrated PostgreSQL with pgvector and durable artifact storage.
+
+Set these server-only placeholders before starting the backend in live model mode:
+
+```powershell
+$env:APP_MODE = "production"
+$env:DATABASE_URL = "postgresql://USER:PASSWORD@HOST:5432/DATABASE"
+$env:OPENAI_API_KEY = "<embedding-provider-key>"
+$env:ORCHESTRATOR_PROVIDER = "openai"
+$env:ORCHESTRATOR_API_KEY = "<orchestrator-provider-key>"
+$env:ORCHESTRATOR_MODEL = "<Responses-compatible model name>"
+```
+
+Apply Alembic migrations before startup. `docs/DEPLOYMENT.md` lists the complete production contract, and `docs/MODEL_EVALUATION.md` provides a credential-gated live smoke/evaluation command. The provider path is covered with mocked integration tests, but no hosted model quality result is claimed. Ollama remains an explicitly configured local option; current evidence does not identify a recommended local default.
+
 ## Verification and limitations
 
 The backend tests and deterministic evaluations are the executable specification for retrieval, verification, Transform-to-Template, external-source boundaries, analytics, workflow runs, and the recurring-sales lifecycle. See `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, and `docs/MODEL_EVALUATION.md` for the implemented boundaries and validation evidence.
