@@ -7,6 +7,7 @@ from io import BytesIO
 import json
 import os
 from threading import Thread
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -20,11 +21,19 @@ from app.main import app
 from pydantic import ValidationError
 
 from app.models.sources import PostgresImportRequest, PostgresSourceConfig, PostgresTableRef, RestSourceConfig
+from app.models.datasets import DatasetProvenance
 from app.models.workflows import WorkflowCreate, WorkflowStep
 from app.services.artifacts import InMemoryArtifactRepository
-from app.services.datasets import MAX_DATASET_COLUMNS, MAX_UPLOAD_BYTES, DatasetTooLargeError, load_dataset, profile_dataset
+from app.services.datasets import (
+    MAX_DATASET_COLUMNS,
+    MAX_UPLOAD_BYTES,
+    DatasetTooLargeError,
+    load_dataset,
+    loaded_from_frame,
+    profile_dataset,
+)
 from app.services.json_adapter import JsonAdapterError, frame_from_json
-from app.services.postgres_source import PostgresSourceError, validate_select
+from app.services.postgres_source import PostgresSourceError, import_source, validate_select
 from app.services.rest_source import RestSourceError, _request_pinned, assert_ip_allowed, effective_ip, import_rest
 from app.services.retrieval import RetrievalService
 from app.embeddings.deterministic import DeterministicEmbeddingProvider
@@ -108,6 +117,69 @@ def test_parquet_inspect_and_malformed() -> None:
     nested = _parquet_bytes([{"order_id": "O-1", "items": [1, 2]}])
     with pytest.raises(Exception, match="Nested Parquet"):
         load_dataset("nested.parquet", nested)
+
+
+def test_imported_frames_obey_the_common_column_limit() -> None:
+    frame = pd.DataFrame(
+        columns=[f"column_{index}" for index in range(MAX_DATASET_COLUMNS + 1)]
+    )
+    provenance = DatasetProvenance(
+        source_type="postgres",
+        identity="postgres://bounded-source",
+        display_name="bounded-source",
+        retrieved_at=pd.Timestamp("2026-01-01", tz="UTC").to_pydatetime(),
+        config_fingerprint="0" * 64,
+        row_count=0,
+    )
+
+    with pytest.raises(DatasetTooLargeError, match="at most 200 columns"):
+        loaded_from_frame("import.csv", "csv", frame, provenance)
+
+
+def test_postgres_rejects_wide_result_before_fetching_rows(monkeypatch) -> None:
+    class Cursor:
+        description = [
+            SimpleNamespace(name=f"column_{index}")
+            for index in range(MAX_DATASET_COLUMNS + 1)
+        ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _query):
+            return None
+
+        def fetchmany(self, _limit):
+            raise AssertionError("Rows must not be fetched for an oversized result schema.")
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(
+        "app.services.postgres_source._connect", lambda _config: Connection()
+    )
+    request = PostgresImportRequest(
+        source=PostgresSourceConfig(
+            host="127.0.0.1",
+            database="bounded",
+            user="reader",
+            password_secret_ref="UNUSED_SECRET_REF",
+        ),
+        select_sql="SELECT * FROM bounded_source",
+    )
+
+    with pytest.raises(PostgresSourceError, match="200-column import limit"):
+        import_source(request)
 
 
 def test_txt_ingestion_retrieval_and_prompt_injection_as_data() -> None:

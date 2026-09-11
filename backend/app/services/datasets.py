@@ -19,6 +19,11 @@ from app.models.datasets import (
 )
 from app.models.datasets import DatasetProvenance
 from app.services.json_adapter import JsonAdapterError, frame_from_json
+from app.services.workbook_safety import (
+    WorkbookArchiveError,
+    WorkbookArchiveTooLargeError,
+    validate_workbook_archive,
+)
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_DATASET_ROWS = 100_000
@@ -76,9 +81,19 @@ def load_dataset(
 
     try:
         if file_type == "csv":
+            header = pd.read_csv(
+                BytesIO(content), encoding="utf-8-sig", on_bad_lines="error", nrows=0
+            )
+            _validate_frame_width(header)
             frame = pd.read_csv(BytesIO(content), encoding="utf-8-sig", on_bad_lines="error")
             selected_sheet = None
         elif file_type == "xlsx":
+            try:
+                validate_workbook_archive(content)
+            except WorkbookArchiveTooLargeError as exc:
+                raise DatasetTooLargeError(str(exc)) from exc
+            except WorkbookArchiveError as exc:
+                raise DatasetReadError(f"Could not read XLSX dataset: {exc}") from exc
             excel = pd.ExcelFile(BytesIO(content), engine="openpyxl")
             if not excel.sheet_names:
                 raise DatasetReadError("The workbook contains no readable sheets.")
@@ -86,6 +101,8 @@ def load_dataset(
             if selected_sheet not in excel.sheet_names:
                 available = ", ".join(excel.sheet_names)
                 raise DatasetReadError(f"Sheet '{selected_sheet}' was not found. Available sheets: {available}.")
+            header = pd.read_excel(excel, sheet_name=selected_sheet, nrows=0)
+            _validate_frame_width(header)
             frame = pd.read_excel(excel, sheet_name=selected_sheet)
         elif file_type == "json":
             frame = frame_from_json(content, records_key)
@@ -102,8 +119,7 @@ def load_dataset(
     except Exception as exc:
         raise DatasetReadError(f"Could not read {file_type.upper()} dataset.") from exc
 
-    if len(frame) > MAX_DATASET_ROWS:
-        raise DatasetTooLargeError(f"Datasets may contain at most {MAX_DATASET_ROWS} rows.")
+    _validate_frame_bounds(frame)
     return LoadedDataset(
         filename=Path(filename).name,
         file_type=file_type,
@@ -120,8 +136,7 @@ def loaded_from_frame(
     provenance: DatasetProvenance,
     selected_sheet: str | None = None,
 ) -> LoadedDataset:
-    if len(frame) > MAX_DATASET_ROWS:
-        raise DatasetTooLargeError(f"Datasets may contain at most {MAX_DATASET_ROWS} rows.")
+    _validate_frame_bounds(frame)
     return LoadedDataset(
         filename=Path(filename).name,
         file_type=file_type,
@@ -200,6 +215,19 @@ def profile_dataset(dataset: LoadedDataset) -> DatasetProfile:
 def dataset_payload(dataset: LoadedDataset) -> tuple[str, str, bytes]:
     content = dataset.frame.to_csv(index=False).encode("utf-8")
     return dataset.filename.rsplit(".", 1)[0] + ".csv", "text/csv", content
+
+
+def _validate_frame_width(frame: pd.DataFrame) -> None:
+    if len(frame.columns) > MAX_DATASET_COLUMNS:
+        raise DatasetTooLargeError(
+            f"Datasets may contain at most {MAX_DATASET_COLUMNS} columns."
+        )
+
+
+def _validate_frame_bounds(frame: pd.DataFrame) -> None:
+    if len(frame) > MAX_DATASET_ROWS:
+        raise DatasetTooLargeError(f"Datasets may contain at most {MAX_DATASET_ROWS} rows.")
+    _validate_frame_width(frame)
 
 
 def _read_parquet(content: bytes) -> pd.DataFrame:

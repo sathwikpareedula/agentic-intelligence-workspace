@@ -23,7 +23,13 @@ from app.models.sources import (
     PostgresTableRef,
     DatasetPayload,
 )
-from app.services.datasets import MAX_DATASET_ROWS, inspect_dataset, loaded_from_frame, profile_dataset
+from app.services.datasets import (
+    MAX_DATASET_COLUMNS,
+    MAX_DATASET_ROWS,
+    inspect_dataset,
+    loaded_from_frame,
+    profile_dataset,
+)
 from app.services.secrets import SecretError, resolve_secret
 
 SYSTEM_SCHEMAS = {"pg_catalog", "information_schema", "pg_toast"}
@@ -141,6 +147,10 @@ def import_source(request: PostgresImportRequest) -> ImportedDataset:
             with connection.cursor() as cursor:
                 cursor.execute(query)
                 columns = [item.name for item in cursor.description or []]
+                if len(columns) > MAX_DATASET_COLUMNS:
+                    raise PostgresSourceError(
+                        f"The result exceeded the {MAX_DATASET_COLUMNS}-column import limit."
+                    )
                 rows = cursor.fetchmany(max_rows + 1)
         except psycopg.errors.ReadOnlySqlTransaction as exc:
             raise PostgresSourceError("The external PostgreSQL session is read-only.") from exc

@@ -69,7 +69,9 @@ def generate_management_workbook(
         provenance_frame = pd.DataFrame(
             list((provenance or {}).items()), columns=["Property", "Value"]
         )
-        provenance_frame.to_excel(writer, sheet_name="Provenance", index=False)
+        _sanitize_spreadsheet_strings(provenance_frame).to_excel(
+            writer, sheet_name="Provenance", index=False
+        )
         numeric_columns = [index + 1 for index, column in enumerate(frame.columns) if pd.api.types.is_numeric_dtype(frame[column])]
         if numeric_columns and len(frame) > 0:
             chart = BarChart()

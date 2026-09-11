@@ -8,11 +8,10 @@ from datetime import date, datetime, timezone
 from hashlib import sha256
 from io import BytesIO
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 from typing import Any
 from uuid import uuid4
-from zipfile import BadZipFile, ZipFile
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -39,10 +38,13 @@ from app.models.transformations import JoinSpec
 from app.services.artifacts import GeneratedArtifact
 from app.services.datasets import MAX_UPLOAD_BYTES, inspect_dataset, load_dataset
 from app.services.transformations import TransformationError, join_datasets
+from app.services.workbook_safety import (
+    WorkbookArchiveError,
+    WorkbookArchiveTooLargeError,
+    validate_workbook_archive,
+)
 
 
-MAX_WORKBOOK_PARTS = 5000
-MAX_WORKBOOK_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 MAX_TEMPLATE_COLUMNS = 500
 MAX_TEMPLATE_ROWS = 100_000
 MAX_TEMPLATE_CELLS = 250_000
@@ -331,21 +333,12 @@ def _inspect_csv_template(filename: str, content: bytes) -> TemplateInspection:
 
 def _validate_workbook_archive(content: bytes) -> None:
     try:
-        with ZipFile(BytesIO(content)) as archive:
-            parts = archive.infolist()
-            if len(parts) > MAX_WORKBOOK_PARTS or sum(item.file_size for item in parts) > MAX_WORKBOOK_UNCOMPRESSED_BYTES:
-                raise TemplateInspectionError("The XLSX archive expands beyond supported safety limits.")
-            for item in parts:
-                path = PurePosixPath(item.filename)
-                if path.is_absolute() or ".." in path.parts:
-                    raise TemplateInspectionError("The XLSX archive contains an unsafe internal path.")
-                if path.name.lower() == "vbaproject.bin":
-                    raise TemplateInspectionError("Macro-enabled workbooks are not accepted.")
-                lowered = item.filename.casefold()
-                if lowered.startswith(("xl/activex/", "xl/embeddings/", "xl/externallinks/")):
-                    raise TemplateInspectionError("Workbooks containing embedded or externally linked active content are not accepted.")
-    except BadZipFile as exc:
-        raise TemplateInspectionError("The target XLSX file is not a valid workbook archive.") from exc
+        validate_workbook_archive(content)
+    except (WorkbookArchiveTooLargeError, WorkbookArchiveError) as exc:
+        message = str(exc)
+        if message == "The XLSX file is not a valid workbook archive.":
+            message = "The target XLSX file is not a valid workbook archive."
+        raise TemplateInspectionError(message) from exc
 
 
 def _detect_header_row(worksheet) -> int:

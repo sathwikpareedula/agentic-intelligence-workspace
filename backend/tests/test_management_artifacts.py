@@ -15,7 +15,7 @@ def test_management_workbook_has_metadata_provenance_chart_and_safe_cells() -> N
     frame = pd.DataFrame({"region": ["North", "=CMD()"], "revenue": [100, 50]})
     artifact = generate_management_workbook(
         frame, "August sales.csv", task_id=task_id, workflow_id=workflow_id,
-        provenance={"source": "transactions.csv", "calculation": "deterministic"},
+        provenance={"source": "transactions.csv", "calculation": "=malicious()"},
     )
     repository = InMemoryArtifactRepository()
     repository.save(artifact)
@@ -28,4 +28,5 @@ def test_management_workbook_has_metadata_provenance_chart_and_safe_cells() -> N
     workbook = load_workbook(BytesIO(artifact.content), data_only=False)
     assert workbook.sheetnames == ["Data", "Summary", "Provenance"]
     assert workbook["Data"]["A3"].value == "'=CMD()"
+    assert workbook["Provenance"]["B3"].value == "'=malicious()"
     assert len(workbook["Summary"]._charts) == 1

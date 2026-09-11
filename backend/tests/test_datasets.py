@@ -1,13 +1,14 @@
 """API tests for deterministic dataset ingestion, inspection, and profiling."""
 
 from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.datasets import MAX_UPLOAD_BYTES
+from app.services.datasets import MAX_DATASET_COLUMNS, MAX_UPLOAD_BYTES
 
 client = TestClient(app)
 
@@ -213,3 +214,60 @@ def test_rejects_file_over_size_limit() -> None:
 
     assert response.status_code == 413
     assert response.json()["detail"] == "File exceeds the 10 MiB limit."
+
+
+@pytest.mark.parametrize("extension", ["csv", "xlsx"])
+def test_rejects_wide_tabular_upload_before_full_processing(extension: str) -> None:
+    frame = pd.DataFrame(
+        columns=[f"column_{index}" for index in range(MAX_DATASET_COLUMNS + 1)]
+    )
+    content = (
+        frame.to_csv(index=False).encode()
+        if extension == "csv"
+        else _xlsx_bytes({"Data": frame})
+    )
+
+    response = client.post(
+        "/datasets/inspect",
+        files={"file": (f"wide.{extension}", content, "application/octet-stream")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Datasets may contain at most 200 columns."
+
+
+def test_rejects_xlsx_archive_expansion_before_workbook_parsing(monkeypatch) -> None:
+    import app.services.workbook_safety as workbook_safety
+
+    content = _xlsx_bytes({"Data": pd.DataFrame({"value": [1]})})
+    monkeypatch.setattr(workbook_safety, "MAX_WORKBOOK_UNCOMPRESSED_BYTES", 1)
+
+    response = client.post(
+        "/datasets/inspect",
+        files={"file": ("expanded.xlsx", content, "application/octet-stream")},
+    )
+
+    assert response.status_code == 413
+    assert "expands beyond supported safety limits" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("member", "message"),
+    [
+        ("../escape.xml", "unsafe internal path"),
+        ("xl/vbaProject.bin", "Macro-enabled"),
+        ("xl/externalLinks/link1.xml", "externally linked active content"),
+    ],
+)
+def test_rejects_unsafe_xlsx_archive_members(member: str, message: str) -> None:
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr(member, b"unsafe")
+
+    response = client.post(
+        "/datasets/inspect",
+        files={"file": ("unsafe.xlsx", output.getvalue(), "application/octet-stream")},
+    )
+
+    assert response.status_code == 422
+    assert message in response.json()["detail"]

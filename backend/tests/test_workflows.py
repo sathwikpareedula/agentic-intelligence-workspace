@@ -143,6 +143,26 @@ def test_immutable_run_history_and_deterministic_comparison() -> None:
     assert all(item.current is None or item.current.run_id == second.run_id for item in comparison.metrics)
 
 
+def test_in_memory_run_repository_rejects_existing_run_mutation() -> None:
+    repository = InMemoryWorkflowRepository()
+    now = datetime.now(timezone.utc)
+    original = WorkflowRun(
+        workflow_id=uuid4(),
+        version=1,
+        status="completed",
+        observations=[],
+        started_at=now,
+        completed_at=now,
+    )
+    repository.save_run(original, {})
+    changed = original.model_copy(update={"status": "failed", "error": "changed"})
+
+    with pytest.raises(WorkflowError, match="cannot be mutated"):
+        repository.save_run(changed, {})
+
+    assert repository.get_run(original.run_id) == original
+
+
 def test_zero_denominator_and_removed_metrics_do_not_invent_values() -> None:
     repository = InMemoryWorkflowRepository()
     service = WorkflowService(repository, ToolRegistry(dataset_tools()))

@@ -91,6 +91,11 @@ class InMemoryWorkflowRepository:
         return [item.model_copy(deep=True) for item in ordered[offset : offset + limit]]
 
     def save_run(self, run: WorkflowRun, overrides: dict[int, dict]) -> None:
+        existing = self.runs.get(run.run_id)
+        if existing is not None:
+            if existing != run:
+                raise WorkflowError("An existing workflow run cannot be mutated.")
+            return
         self.runs[run.run_id] = run.model_copy(deep=True)
 
     def get_run(self, run_id: UUID) -> WorkflowRun | None:
