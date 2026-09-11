@@ -83,6 +83,33 @@ def test_extract_pdf_text_and_stable_document_identity() -> None:
 
 
 @pytest.mark.parametrize(
+    ("filename", "expected_text"),
+    [
+        (
+            "commission_policy.pdf",
+            "Monthly commission policy: Salespeople earn a commission rate of 5% of completed net sales after discounts.",
+        ),
+        (
+            "syllabus.pdf",
+            "Grading policy: An A requires at least 90%. The final exam is 30% of the course grade.",
+        ),
+        (
+            "reporting_policy.pdf",
+            "Monthly reporting policy: Eligible net sales receive a commission rate of 5%. Use only completed supplied records.",
+        ),
+    ],
+)
+def test_committed_demo_pdfs_parse_through_strict_ingestion(filename: str, expected_text: str) -> None:
+    path = Path(__file__).parents[2] / "sample_data" / filename
+    content = path.read_bytes()
+
+    document = extract_pdf(filename, content, len(content) + 1)
+
+    assert document.page_count == 1
+    assert document.pages == [PageText(page_number=1, text=expected_text)]
+
+
+@pytest.mark.parametrize(
     ("filename", "content", "message"),
     [
         ("document.txt", b"text", "Unsupported file type"),

@@ -72,3 +72,36 @@ Replace only the transactions file with:
 
 ```text
 sample_data/september_transactions.csv
+```
+
+After the initial report, select **Create First Run** to record the August baseline. Replace the transactions file, select **Run Again with Current Inputs** to execute the same saved recipe for September, then compare the two completed runs in **What Changed?**. The comparison uses facts persisted by deterministic tools; the browser does not recalculate them.
+
+Finally, replace the transactions file with `sample_data/incompatible_transactions.csv`. The missing required `discount` column must create an inspectable blocked run rather than a report.
+
+## Quick start
+
+Prerequisites: Python 3.11 or newer and Node.js 22. The demo path needs no database or provider credential.
+
+```powershell
+cd backend
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[test]"
+$env:APP_MODE = "demo"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+In a second terminal:
+
+```powershell
+cd frontend
+npm.cmd ci
+npm.cmd run dev
+```
+
+Open `http://localhost:3000` and choose **Reusable monthly sales workflow**. `APP_MODE=demo` uses process-local repositories and deterministic token-hash embeddings; it does not call a hosted model.
+
+## Verification and limitations
+
+The backend tests and deterministic evaluations are the executable specification for retrieval, verification, Transform-to-Template, external-source boundaries, analytics, workflow runs, and the recurring-sales lifecycle. See `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, and `docs/MODEL_EVALUATION.md` for the implemented boundaries and validation evidence.
+
+PostgreSQL 17.4 with pgvector 0.8.6 was verified locally against an isolated project database. Hosted-provider execution, cloud deployment, multi-user authentication/authorization, OCR, parser sandboxing, object storage, and Docker runtime remain unverified or out of V1 scope; the repository does not claim them as completed.
