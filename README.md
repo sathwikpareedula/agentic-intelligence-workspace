@@ -1,142 +1,74 @@
 # Agentic Intelligence Workspace
 
-> A bounded V1 implementation with a tested FastAPI backend, one typed orchestrator, evidence-bound mixed reasoning, versioned workflows, durable PostgreSQL adapters, real management artifacts, and a functional Next.js workspace.
+**Turn recurring data work into verified, reusable workflows.**
 
-This project turns natural-language goals over structured data and unstructured documents into verified, reproducible workflows and useful artifacts. Calculations remain in deterministic typed tools. A model provider may select tools and explain results, but cannot execute arbitrary Python, SQL, or shell commands.
+Agentic Intelligence Workspace is an agentic data-operations platform that combines AI planning with deterministic data tools to analyze structured data and business documents, generate validated deliverables, preserve evidence and provenance, and safely rerun successful workflows on new data.
 
-## Implemented
+Instead of asking an AI assistant to repeat the same analysis every month, the workspace turns a successful task into a versioned workflow that can be rerun, inspected, compared, and stopped when new inputs are no longer safe or compatible.
 
-- CSV/XLSX inspection, profiling, transformations, joins, aggregations, derivations, and safe exports.
-- PDF extraction, deterministic chunking, provider/repository abstractions, ranked retrieval, and citations.
-- One bounded observe/replan orchestrator with strict arguments, redacted traces, explicit errors, and iteration limits.
-- Environment-configured OpenAI Responses and native local Ollama providers with strict structured decisions, bounded context/output, timeouts, retries, and safe provider errors.
-- Task-scoped general tools for dataset inspection/profiling, transformations, joins, aggregations, artifact exports, grounded document retrieval, and authorized workflow reruns.
-- `grades.csv` + `syllabus.pdf` mixed reasoning with a deterministic required-final calculator.
-- Numeric/citation verification and versioned deterministic recipes with schema-drift checks.
-- Provenance-carrying management XLSX artifacts and a reusable monthly sales demonstration with known-ground-truth August and September fixtures.
-- Next.js workspace UI for uploads, tasks, traces, evidence, verification, and artifact visibility.
-- Alembic-managed PostgreSQL schema for documents/chunks, workflow versions and runs, artifact metadata, and structured execution records.
-- Production pgvector exact-cosine retrieval with provider/model/dimension isolation and optional document filtering.
-- PostgreSQL-backed workflow metadata plus local-filesystem artifact bodies with hashes and PostgreSQL provenance metadata.
-- A recruiter-focused monthly sales workflow that discovers the three uploaded table roles from inspected schemas, retrieves commission evidence, runs deterministic cleaning/joins/analysis/commissions, verifies named facts, generates a six-sheet workbook with three charts, and saves a schema-checked recipe for compatible future periods.
-- A deterministic Transform-to-Template workflow for CSV/XLSX targets with structural inspection, evidence-ranked mappings, first-class clarification states, guarded joins and derivations, policy-grounded rates, exact template writing, reopen validation, field provenance, and drift-checked reruns.
-- Bounded JSON/Parquet dataset adapters, UTF-8 text document ingestion through the existing retriever, a read-only external PostgreSQL connector, and a GET-only REST JSON connector with SSRF protections and secret references.
-- Typed deterministic analytics over workspace datasets, with named numeric facts, existing-verifier grounding, optional validated read-only SQL against external PostgreSQL, and a focused analytics UI. DuckDB is not used.
-- Immutable workflow-run history with lifecycle, safe input/source snapshots, schema/type drift findings, verification summaries, artifacts, and deterministic same-workflow “What Changed?” comparisons.
-- Compact run observability and drift deltas for per-column missing values, duplicate rows, bounded categories/unique counts, schema columns/types, join diagnostics, warnings, artifacts, and step outcomes. These are labeled drift, not statistical anomalies.
+---
 
-## Quick start
+## Why I Built This
 
-Prerequisites: Python 3.11 or newer and Node.js 22. The demo path needs no database or provider credential.
+General-purpose AI assistants are already good at one-off spreadsheet analysis.
 
-```powershell
-cd backend
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[test]"
-.\.venv\Scripts\python.exe -m pytest -q
-$env:APP_MODE = "demo"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
-```
+The harder engineering problem is making recurring AI-assisted data work:
 
-```powershell
-cd frontend
-npm.cmd ci
-npm.cmd run dev
-```
+- reproducible;
+- verifiable;
+- evidence-backed;
+- safe around changing inputs;
+- deterministic where correctness matters;
+- inspectable after execution;
+- reusable across future reporting periods.
 
-`APP_MODE=demo` is the zero-dependency path. It intentionally uses process-local repositories, deterministic token-hash embeddings, and the explicit bounded grades demonstration provider. It never silently calls a hosted model.
+The core design principle is:
 
-For production mode, create a project-owned PostgreSQL database, configure `DATABASE_URL` without committing credentials, and apply migrations before starting the API:
+> **Use the model for planning and semantic reasoning. Use deterministic tools for calculations, transformations, validation, and artifact generation.**
 
-```powershell
-cd backend
-$env:DATABASE_URL = "postgresql://USER:PASSWORD@localhost:5432/agentic_intelligence"
-.\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\alembic.exe current
-$env:APP_MODE = "production"
-$env:ORCHESTRATOR_PROVIDER = "openai"
-$env:ORCHESTRATOR_API_KEY = "..." # or use OPENAI_API_KEY
-$env:ORCHESTRATOR_MODEL = "gpt-6-astra"
-# Optional for a Responses-compatible endpoint:
-$env:ORCHESTRATOR_BASE_URL = "https://api.openai.com/v1"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
-```
+The model can choose from approved tools and explain results, but it cannot execute arbitrary Python, shell commands, or unrestricted SQL.
 
-The initial migration enables pgvector and creates every production table. The database role used for migration must be permitted to create the `vector` extension; the runtime should use a least-privilege role in a real deployment. For each schema change, create a new revision with `alembic revision -m "description"`, implement both directions, review generated SQL, and apply `alembic upgrade head`. Never edit a revision after it has been deployed.
+---
 
-Alternatively, follow [the deployment guide](docs/DEPLOYMENT.md) to set server-only secrets, set the browser-visible `NEXT_PUBLIC_API_URL` before building the frontend, and run the Compose stack. Compose has a one-shot migration service and persistent volumes for PostgreSQL and artifact bodies. The controlled offline evaluation requires neither PostgreSQL nor an API key:
+## Flagship Demo: Reusable Monthly Sales Workflow
 
-```powershell
-cd backend
-.\.venv\Scripts\python.exe -m app.evaluation.retrieval ..\evals\retrieval_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.product ..\evals\product_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.agent ..\evals\agent_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.north_star ..\evals\north_star_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.template_transform ..\evals\template_transform_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.sources ..\evals\source_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.analytics ..\evals\analytics_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.workflow_runs ..\evals\workflow_run_cases.json
-.\.venv\Scripts\python.exe -m app.evaluation.recurring_sales ..\evals\recurring_sales_cases.json
-```
+The main demo shows the full lifecycle of a recurring analytical workflow.
 
-For local orchestration, start Ollama separately and select it explicitly. The application never pulls a model automatically and accepts only a loopback Ollama endpoint:
+### First run
 
-```powershell
-$model = "replace-with-a-compatible-model-tag"
-ollama pull $model
-ollama serve
-$env:APP_MODE = "production"
-$env:ORCHESTRATOR_PROVIDER = "ollama"
-$env:ORCHESTRATOR_BASE_URL = "http://127.0.0.1:11434/api"
-$env:ORCHESTRATOR_MODEL = $model
-$env:ORCHESTRATOR_CONTEXT_TOKENS = "8192"
-```
+Upload:
 
-Ollama orchestration requires no provider secret. No local model is currently designated as the default. Qwen 3.5 4B is the next size-appropriate candidate for a GPU-backed compatibility preflight and unchanged benchmark, not a quality recommendation; the CPU-only development laptop could not return its preflight decision within the product timeout. Runtime compatibility, hardware feasibility, and model quality are tracked separately in `docs/MODEL_EVALUATION.md`. Production persistence and hosted embeddings retain their own existing database and credential requirements.
+- `sample_data/august_transactions.csv`
+- `sample_data/sales_customers.csv`
+- `sample_data/sales_targets.csv`
+- `sample_data/commission_policy.pdf`
 
-All commands exit nonzero when a controlled case fails. The product evaluation covers deterministic grade calculation and evidence states, numeric verification, demo tool selection, workflow schema drift, and fixed August sales ground truth. The agent evaluation covers controlled aggregation/join selection, recoverable replanning, iteration limits, and insufficient evidence with a scripted provider. The north-star evaluation covers the complete sales plan, totals, regional variance, commissions, citations, policy refusal, join warnings, verification, artifact contents, recipe reruns, schema drift, and bounded failures. Source and analytics evaluations exercise the bounded connector and typed-computation contracts. These offline evaluations do not exercise hosted models, hosted embeddings, or a live database unless the source evaluator receives an explicit isolated `TEST_DATABASE_URL`.
+The system:
 
-The Transform-to-Template evaluation covers all 18 controlled cases from exact and normalized mappings through ambiguity, missing fields, type refusal, safe/unsafe joins, derivations, exact schema order, workbook reopen/preservation, formula-injection protection, policy grounding/refusal, workflow reruns, source/template drift, and confirmed-mapping reuse.
+1. inspects the uploaded datasets;
+2. identifies their roles from their schemas;
+3. retrieves the relevant commission policy evidence;
+4. cleans and joins the data;
+5. calculates sales, targets, shortfalls, and commissions using deterministic code;
+6. verifies important numeric and policy-backed claims;
+7. generates a management workbook;
+8. records provenance and execution history;
+9. saves the successful operation as a reusable workflow.
 
-## Demonstrations
+The generated workbook contains:
 
-`sample_data/grades.csv` and `sample_data/syllabus.pdf` exercise cited policy evidence plus deterministic weighted-grade calculation. The monthly sales fixtures and `commission_policy.pdf` exercise cleaning, join diagnostics, targets, underperformance, deterministic commissions, verification, a management workbook, a saved/rerunnable recipe, and a blocked incompatible schema. Tests contain the executable end-to-end paths and fixed expected outputs.
+- Executive Summary
+- Regional Performance
+- Salesperson Performance
+- Cleaned Transactions
+- Data Quality
+- Provenance & Sources
 
-`sample_data/analytics_sales.csv` and `sample_data/analytics_sales_september.csv` are compatible period inputs for the workflow-run evaluator. It saves one typed grouped-sales workflow, records separate August and September runs, and compares exact metric, group, row-count, schema, quality, category, verification, warning, artifact, join-diagnostic, and step changes. The browser’s saved-workflow panel can create runs from the currently selected inputs, list immutable lifecycle history, select any two completed compatible runs, and compare them in Business Metrics, Data Quality, Join Quality, Schema/Sources, and Trust/Execution sections. Compact before/current bars use the same saved deterministic facts; comparisons report observations only and do not invent business causes.
+It also contains charts for actual vs. target sales, shortfalls, and commissions.
 
-The recurring-sales evaluator exercises the flagship lifecycle through the public API: retrieve policy evidence, save one analytics-plus-template workflow, execute August and September inputs as immutable verified runs, download the current workbook, compare persisted metrics and drift with both run references, and retain a deliberately schema-incompatible attempt as an inspectable blocked run. Its 12 controlled cases use in-memory repositories and deterministic providers; they do not claim hosted-model or live-database coverage.
+### Run it again
 
-### Recruiter north-star: reusable monthly sales workflow
+Replace only the transactions file with:
 
-In the browser, choose **Reusable monthly sales workflow**, enter the goal, and upload the August baseline:
-
-- `sample_data/august_transactions.csv` as transactions;
-- `sample_data/sales_customers.csv` as customers;
-- `sample_data/sales_targets.csv` as targets; and
-- `sample_data/commission_policy.pdf` as policy evidence.
-
-After the initial report, select **Create First Run** to record the August baseline. Replace only the transactions upload with `sample_data/september_transactions.csv`, select **Run Again with Current Inputs**, and compare the two completed immutable runs in **What Changed?**. Then replace transactions with `sample_data/incompatible_transactions.csv`; the missing required `discount` column must create an inspectable blocked run instead of producing a report.
-
-The bounded orchestrator lists and inspects the authorized resources, identifies their roles from required columns rather than filenames, retrieves the commission rule with page/chunk provenance, and invokes `sales.north_star_report`. Deterministic code preserves the source frames, handles safe cleaning, rejects ambiguous duplicates and policy rules, reports join losses, computes every total/variance/commission, and emits named verification facts.
-
-The downloadable workbook contains **Executive Summary**, **Regional Performance**, **Salesperson Performance**, **Cleaned Transactions**, **Data Quality**, and **Provenance & Sources** sheets plus actual-vs-target, shortfall, and commission charts. The UI shows a user-facing Goal → Plan → Inspect → Retrieve → Clean → Join → Analyze → Calculate commissions → Generate workbook → Verify → Complete trace, citations, warnings, verification findings, and the saved recipe version. Reruns accept compatible replacement resources and fail on material schema drift.
-
-The controlled fixture currently yields total net sales `2350.00`, total commission `117.50`, North net sales `1350.00`, and a North shortfall of `650.00`; Alice's cited-policy commission is `67.50`. An unmatched customer remains visible under `Unassigned`, and that missing customer/target relationship is reported as a warning rather than hidden. These are synthetic deterministic results, not hosted-model quality evidence.
-
-### Transform-to-Template demo
-
-Choose **Transform to supplied template** in the browser and upload `sample_data/raw_orders.xlsx`, `sample_data/customer_master.csv`, `sample_data/reporting_policy.pdf`, and `sample_data/required_template.xlsx`. The first action inspects the sources and target and displays mappings, confidence, and unresolved fields. The second executes the displayed deterministic customer join, currency cleaning, net-sales derivation, cited commission rule, exact workbook write, reopen checks, provenance, and workflow save.
-
-The output preserves the target's `Monthly Submission` and `Instructions` sheets, translates its trusted local formulas into each output row, and neutralizes untrusted formula-like source text. The original uploads are never overwritten. The public API is `POST /template-transforms/proposals` followed by `POST /template-transforms/executions`; successful executions return artifact and reusable-workflow references, while unresolved requirements and failed validation are explicit response states.
-
-### External and file sources
-
-Choose **External and file sources** to inspect `sample_data/source_orders.json`, `sample_data/source_orders.parquet`, or `sample_data/source_notes.txt`, or to import from PostgreSQL/REST using environment secret references (`EXTERNAL_PG_PASSWORD`, `REST_BEARER_TOKEN`). The UI does not store passwords. Private REST URLs require `ALLOW_PRIVATE_REST_TARGETS=1` on the server. DOCX is not implemented.
-
-## Verification boundaries and current limitations
-
-Implemented and tested offline: repository behavior, migration shape/static SQL, runtime separation, readiness failures, demo workflows, deterministic evaluations, and frontend build checks. CI is configured to run the same isolated PostgreSQL 17 + pgvector integration contract.
-
-Live-verified locally on an isolated PostgreSQL 17.4 database with pgvector 0.8.6: Alembic upgrade to head, extension/readiness probes, transactional document and chunk persistence, exact cosine search with document filtering, durable workflow/run/artifact/execution reloads, and the bounded PostgreSQL source connector. The verification used a restricted project role and temporary local secret injection; no credential or machine-specific connection string is committed. Hosted embeddings and hosted orchestrator execution remain unverified without provider credentials.
-
-Planned or still incomplete: OCR, authentication/authorization, tenant isolation, parser sandboxing/malware scanning, retention controls, connection pooling, object storage, production rate limiting, broad hosted-provider quality evaluation, and deployed-cloud verification. Local filesystem artifact storage is intentionally the current production body store; PostgreSQL stores only metadata, references, and integrity hashes.
+```text
+sample_data/september_transactions.csv
