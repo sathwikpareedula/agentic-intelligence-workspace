@@ -1,4 +1,4 @@
-"""End-to-end HTTP boundary for the bounded August sales demonstration."""
+"""End-to-end HTTP boundary for the reusable monthly sales demonstration."""
 
 import base64
 
@@ -41,7 +41,7 @@ async def prepare_august_report(
     customers: UploadFile = File(...),
     targets: UploadFile = File(...),
     policy: UploadFile = File(...),
-    goal: str = Form(default="Prepare the August sales report.", min_length=1, max_length=10000),
+    goal: str = Form(default="Prepare the monthly sales report.", min_length=1, max_length=10000),
     settings: Settings = Depends(get_settings),
 ) -> AgentExecution:
     if settings.app_mode == "production" and settings.orchestrator_provider == "none":

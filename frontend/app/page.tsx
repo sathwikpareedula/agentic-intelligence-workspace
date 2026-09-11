@@ -179,7 +179,7 @@ function AnalyticsVisualization({ result }: { result: AnalyticsResult }) {
 
 export default function WorkspacePage() {
   const [demo, setDemo] = useState<"grades" | "sales" | "template" | "sources" | "analytics">("sales");
-  const [goal, setGoal] = useState("Prepare the August sales report. Clean transactions, compare regional targets, identify the largest shortfalls, calculate policy-based commissions, and export a management workbook while preserving the originals.");
+  const [goal, setGoal] = useState("Prepare the monthly sales report. Clean transactions, compare regional targets, identify the largest shortfalls, calculate policy-based commissions, and export a management workbook while preserving the originals.");
   const [dataset, setDataset] = useState<File | null>(null);
   const [document, setDocument] = useState<File | null>(null);
   const [customers, setCustomers] = useState<File | null>(null);
@@ -574,12 +574,12 @@ export default function WorkspacePage() {
                 ? "Import a bounded JSON, Parquet, PostgreSQL, or REST source into the existing dataset tools without storing secrets in the browser."
                 : next === "analytics"
                   ? "Which region is furthest below target, what is the shortfall, and which salesperson contributed the most net sales?"
-              : "Prepare the August sales report. Clean the transaction data, compare performance against targets by region, identify the largest drivers of underperformance, calculate salesperson commissions according to the policy, generate appropriate charts, and export a management workbook while preserving the original data.");
+              : "Prepare the monthly sales report. Clean the transaction data, compare performance against targets by region, identify the largest drivers of underperformance, calculate salesperson commissions according to the policy, generate appropriate charts, and export a management workbook while preserving the original data.");
           setDataset(null); setDocument(null); setCustomers(null); setTargets(null); setExecution(null);
           setTemplateTarget(null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({});
           setSourceResult(null); setSourceFile(null); setAnalyticsFile(null); setAnalyticsResult(null); setAnalyticsPlan(SHORTFALL_PLAN);
           setDatasetInfo("No dataset selected"); setDocumentInfo("No document selected");
-        }}><option value="grades">Grades + syllabus</option><option value="sales">August sales report</option><option value="template">Transform to supplied template</option><option value="sources">External and file sources</option><option value="analytics">Deterministic analytics</option></select>
+        }}><option value="grades">Grades + syllabus</option><option value="sales">Reusable monthly sales workflow</option><option value="template">Transform to supplied template</option><option value="sources">External and file sources</option><option value="analytics">Deterministic analytics</option></select>
         {demo === "analytics" && <p className="sourceNote">Numbers come from a typed analytical plan executed in pandas. The model does not invent the shortfall or contributor ranking.</p>}
         {demo === "sources" && <p className="sourceNote">Passwords and tokens stay in server environment variables. This UI only sends secret reference names, never raw credentials.</p>}
         {(demo === "sales" || demo === "template") && <div className="promise" aria-label="Workflow outcomes"><span>01 · Inspect & map</span><span>02 · Transform & derive</span><span>03 · Verify & export</span></div>}
@@ -588,12 +588,12 @@ export default function WorkspacePage() {
         <textarea id="goal" value={goal} onChange={(event) => setGoal(event.target.value)} required maxLength={10000} />
         {demo !== "sources" && demo !== "analytics" && <>
         <div className="uploads">
-          <label className="upload">{demo === "grades" ? "Structured grade data" : demo === "template" ? "Raw orders" : "August transactions"}<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setDataset(event.target.files?.[0] ?? null); setDatasetInfo("Awaiting inspection"); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{dataset?.name ?? datasetInfo}</small></label>
+          <label className="upload">{demo === "grades" ? "Structured grade data" : demo === "template" ? "Raw orders" : "Monthly transactions (August baseline)"}<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setDataset(event.target.files?.[0] ?? null); setDatasetInfo("Awaiting inspection"); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{dataset?.name ?? datasetInfo}</small></label>
           <label className="upload">{demo === "grades" ? "Grading policy PDF" : demo === "template" ? "Reporting policy PDF" : "Commission policy PDF"}<input type="file" accept=".pdf,application/pdf" disabled={busy} onChange={(event) => { setDocument(event.target.files?.[0] ?? null); setDocumentInfo("Awaiting ingestion"); setTemplateResult(null); }} /><small>{document?.name ?? documentInfo}</small></label>
           {demo === "sales" && <><label className="upload">Customer regions<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => setCustomers(event.target.files?.[0] ?? null)} /><small>{customers?.name ?? "No customer file selected"}</small></label><label className="upload">Regional targets<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => setTargets(event.target.files?.[0] ?? null)} /><small>{targets?.name ?? "No target file selected"}</small></label></>}
           {demo === "template" && <><label className="upload">Customer master<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setCustomers(event.target.files?.[0] ?? null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{customers?.name ?? "No customer master selected"}</small></label><label className="upload">Required target template<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={(event) => { setTemplateTarget(event.target.files?.[0] ?? null); setTemplateProposal(null); setTemplateResult(null); setMappingOverrides({}); }} /><small>{templateTarget?.name ?? "No target template selected"}</small></label></>}
         </div>
-        <button disabled={!canRun} title={runtime?.status === "not_ready" ? "Complete backend configuration before running tasks" : unresolvedTemplateFields.length ? "Resolve required fields before execution" : undefined}>{busy ? phase ?? "Executing workflow…" : demo === "template" ? templateProposal ? "Execute verified template transform" : "Inspect and propose mappings" : demo === "sales" ? "Build verified August report" : "Run verified task"}</button>
+        <button disabled={!canRun} title={runtime?.status === "not_ready" ? "Complete backend configuration before running tasks" : unresolvedTemplateFields.length ? "Resolve required fields before execution" : undefined}>{busy ? phase ?? "Executing workflow…" : demo === "template" ? templateProposal ? "Execute verified template transform" : "Inspect and propose mappings" : demo === "sales" ? "Build verified monthly report" : "Run verified task"}</button>
         </>}
         {demo === "sources" && <div>
           <label htmlFor="sourceKind">Source type</label>

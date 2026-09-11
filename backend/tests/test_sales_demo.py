@@ -203,7 +203,7 @@ def test_august_sales_demo_runs_through_public_http_and_downloads_workbook(monke
     assert body["verification"]["status"] == "verified_with_warnings"
     assert body["citations"][0]["filename"] == "commission_policy.pdf"
     assert body["artifacts"][0]["download_url"].startswith("/artifacts/")
-    assert body["saved_workflow"]["name"] == "August sales management report"
+    assert body["saved_workflow"]["name"] == "Monthly sales management report"
     assert [stage["name"] for stage in body["stages"]] == [
         "Goal",
         "Plan",

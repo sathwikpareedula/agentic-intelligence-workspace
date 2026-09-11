@@ -1270,7 +1270,7 @@ def _save_sales_workflow(
         ).columns
     return workflow_service.create(
         WorkflowCreate(
-            name="August sales management report",
+            name="Monthly sales management report",
             steps=[
                 WorkflowStep(
                     tool="sales.august_report",

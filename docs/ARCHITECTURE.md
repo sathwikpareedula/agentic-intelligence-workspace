@@ -4,7 +4,7 @@
 
 The FastAPI backend provides deterministic structured-data operations, PDF evidence retrieval, one bounded orchestrator, mixed grade and sales tools, evidence-based verification, versioned workflows, and provenance-carrying artifacts. `APP_MODE=demo` uses deterministic in-memory providers. Production mode selects PostgreSQL repositories, pgvector retrieval, hosted embeddings, local filesystem artifact bodies, and PostgreSQL artifact/run metadata without silently falling back to demo implementations.
 
-The frontend will not be built first. Early work will establish deterministic data behavior, contracts, evidence handling, and evaluation before investing in a production interface.
+The Next.js frontend now exposes the implemented task, evidence, artifact, saved-workflow, run-history, and What Changed paths. Deterministic data behavior, contracts, evidence handling, and evaluation remain authoritative behind that interface.
 
 ## Intended V1 Shape
 
@@ -46,7 +46,7 @@ The north-star sales path is registered in this same task-scoped tool registry. 
 
 ### Deterministic Data Tools
 
-Current deterministic services ingest CSV/XLSX data; inspect and profile datasets; and apply typed selection, filtering, sorting, renaming, deduplication, missing-value handling, restricted arithmetic derivation, grouping, aggregation, and joins. Join diagnostics surface unmatched rows and repeated-key multiplication. Broader calculations, schema checks, and validations remain future work. Inputs and outputs are typed and testable; an LLM is not the computation engine.
+Current deterministic services ingest CSV/XLSX data; inspect and profile datasets; and apply typed selection, filtering, sorting, renaming, deduplication, missing-value handling, restricted arithmetic derivation, grouping, aggregation, and joins. Join diagnostics surface unmatched rows and repeated-key multiplication. Typed analytics, schema/type/data-quality drift checks, and product-specific monthly sales calculations use the same deterministic boundary. Inputs and outputs are typed and testable; an LLM is not the computation engine.
 
 Transform-to-Template reuses these ingestion and join boundaries behind a specialized typed plan. Template inspection records target headers/order, likely sheet/header row, examples, basic types/formats, trusted local formulas, workbook sheet structure, and a structural SHA-256 fingerprint. Mapping proposals rank explicit confirmations, exact/normalized names, documented aliases, and conservative semantic candidates; ambiguity, missing requirements, and incompatible values are first-class states. Execution prefixes source fields by role, applies only enumerated transformations/derivations, requires retrieved evidence for policy percentages, blocks configured join anomalies, writes a new in-memory artifact, and reopens it for validation.
 
@@ -88,4 +88,4 @@ The controlled recurring-sales scenario composes the existing typed analytics an
 
 ## Cross-Cutting Requirements
 
-Security, authorization, provenance, observability, testing, evaluation, performance, and cost controls apply across all layers. Exact mechanisms remain to be designed and implemented.
+Security, provenance, observability, testing, evaluation, bounded provider usage, and explicit cost metadata apply across all layers. Authentication, authorization, tenancy, rate limiting, and production operations remain documented post-V1 work rather than implicit capabilities.

@@ -67,7 +67,7 @@ The roadmap expresses sequencing, not completed functionality. Milestones should
 - [x] Add a native loopback-only Ollama provider and checkpointed/resumable product-model evaluation without changing the orchestrator or deterministic tool authority.
 - [x] Run the `qwen3.5:4b` fixed-settings compatibility preflight; skip its ten-case benchmark after it fails to return a bounded decision within 60 seconds, and retain no local default rather than weakening the contract.
 - [x] Add durable production workflow repositories, artifact metadata/filesystem storage, and artifact download APIs.
-- [x] Turn August sales into the recruiter-facing north-star with schema discovery, policy-bound commissions, named-fact verification, join warnings/failures, a polished six-sheet workbook, structured execution stages, and schema-checked reruns.
+- [x] Turn the August baseline into a reusable monthly recruiter workflow with schema discovery, policy-bound commissions, named-fact verification, join warnings/failures, a polished six-sheet workbook, structured execution stages, compatible September reruns, persisted What Changed facts, and blocked schema drift.
 - [x] Add a dedicated controlled north-star evaluation covering outputs, evidence, failures, artifacts, and reproducibility.
 - [x] Complete frontend typecheck and production-build verification.
 - [ ] Complete browser interaction and accessibility verification.
