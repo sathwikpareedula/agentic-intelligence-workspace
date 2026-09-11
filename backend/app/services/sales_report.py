@@ -1,4 +1,4 @@
-"""Deterministic, policy-grounded August sales reporting workflow."""
+"""Deterministic, policy-grounded monthly sales reporting workflow."""
 
 from dataclasses import dataclass
 import re
@@ -23,6 +23,7 @@ class SalesReportError(Exception):
 
 @dataclass(frozen=True)
 class SalesReportResult:
+    reporting_period: str
     cleaned_transactions: pd.DataFrame
     regional_performance: pd.DataFrame
     commissions: pd.DataFrame
@@ -55,7 +56,7 @@ def build_august_sales_report(
     _require(targets, {"region", "target"}, "targets")
     rate, citations = _commission_rate(policy_evidence)
 
-    cleaned, quality = _clean_transactions(transactions)
+    cleaned, quality, reporting_period = _clean_transactions(transactions)
     cleaned["commission"] = cleaned["net_sales"] * rate
     clean_customers, customer_warnings = _clean_customers(customers)
     clean_targets = _clean_targets(targets)
@@ -116,7 +117,7 @@ def build_august_sales_report(
         )
     if target_diagnostics["targets_without_sales"]:
         warnings.append(
-            f"{target_diagnostics['targets_without_sales']} target region(s) had no completed August sales."
+            f"{target_diagnostics['targets_without_sales']} target region(s) had no completed {reporting_period} sales."
         )
 
     regional["transaction_count"] = regional["transaction_count"].fillna(0).astype(int)
@@ -174,6 +175,7 @@ def build_august_sales_report(
         cleaned_output,
         regional,
         commissions,
+        reporting_period=reporting_period,
         data_quality=quality,
         customer_join_diagnostics=joined.diagnostics,
         target_join_diagnostics=target_diagnostics,
@@ -184,23 +186,25 @@ def build_august_sales_report(
             "targets_source": (source_names or {}).get("targets", "uploaded targets"),
             "source_preservation": "Original uploads were read only; all cleaning and calculations used in-memory copies.",
             "commission_policy_sources": ",".join(str(source.chunk_id) for source in citations),
-            "commission_rate": f"{rate * 100:g}% of completed August net sales after discounts",
+            "reporting_period": reporting_period,
+            "commission_rate": f"{rate * 100:g}% of completed {reporting_period} net sales after discounts",
             "calculation_boundary": "All workbook values were computed by deterministic typed code, not by a language model.",
         },
         warnings=warnings,
     )
     return SalesReportResult(
-        cleaned_output,
-        regional,
-        commissions,
-        joined.diagnostics,
-        target_diagnostics,
-        quality,
-        rate,
-        citations,
-        warnings,
-        facts,
-        artifact,
+        reporting_period=reporting_period,
+        cleaned_transactions=cleaned_output,
+        regional_performance=regional,
+        commissions=commissions,
+        join_diagnostics=joined.diagnostics,
+        target_join_diagnostics=target_diagnostics,
+        data_quality=quality,
+        commission_rate=rate,
+        citations=citations,
+        warnings=warnings,
+        verification_facts=facts,
+        artifact=artifact,
     )
 
 
@@ -220,7 +224,7 @@ def _commission_rate(policy_evidence: list[PolicyEvidence]) -> tuple[float, list
     # Fail closed on qualifiers, exceptions, gross-sales rules and document instructions.
     # This is a deliberately small supported policy language, not a general policy interpreter.
     supported = re.compile(
-        r"(?:August commission policy:\s*)?Salespeople earn a commission rate(?: of| is)?\s*"
+        r"(?:Monthly commission policy:\s*)?Salespeople earn a commission rate(?: of| is)?\s*"
         r"\d+(?:\.\d+)?\s*% of completed net sales after discounts\.?", re.I
     )
     if any(not supported.fullmatch(" ".join(item.text.split())) for item in policy_evidence):
@@ -234,7 +238,7 @@ def _commission_rate(policy_evidence: list[PolicyEvidence]) -> tuple[float, list
     return rate, list({str(source.chunk_id): source for source in citations}.values())
 
 
-def _clean_transactions(transactions: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
+def _clean_transactions(transactions: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any], str]:
     cleaned = transactions.copy(deep=True)
     original_rows = len(cleaned)
     if {"net_sales", "commission", "region"} & set(transactions.columns):
@@ -254,7 +258,7 @@ def _clean_transactions(transactions: pd.DataFrame) -> tuple[pd.DataFrame, dict[
         raise SalesReportError("Amounts and discounts must be finite numbers.")
     cleaned["discount"] = parsed_discounts.fillna(0.0)
     status_complete = cleaned["status"].astype(str).str.strip().str.lower().eq("complete")
-    valid_august = cleaned["date"].notna() & cleaned["date"].dt.month.eq(8)
+    valid_date = cleaned["date"].notna()
     valid_amount = cleaned["amount"].notna()
     identity_columns = ["transaction_id", "salesperson", "customer_id"]
     valid_identity = pd.Series(True, index=cleaned.index)
@@ -268,15 +272,16 @@ def _clean_transactions(transactions: pd.DataFrame) -> tuple[pd.DataFrame, dict[
                 f"Transaction ID '{transaction_id}' has conflicting duplicate rows; automatic deduplication is unsafe."
             )
 
-    eligible = status_complete & valid_august & valid_amount & valid_identity
+    eligible = status_complete & valid_date & valid_amount & valid_identity
     cleaned = cleaned.loc[eligible].drop_duplicates(subset=["transaction_id"], keep="first").copy()
-    august_years = cleaned["date"].dt.year.dropna().unique()
-    if len(august_years) > 1:
-        raise SalesReportError("Completed transactions span multiple August years; the reporting year is ambiguous.")
+    if cleaned.empty:
+        raise SalesReportError("No valid completed transactions remain after bounded cleaning.")
+    reporting_periods = cleaned["date"].dt.to_period("M").unique()
+    if len(reporting_periods) > 1:
+        raise SalesReportError("Completed transactions span multiple reporting months; the reporting period is ambiguous.")
+    reporting_period = cleaned["date"].iloc[0].strftime("%B %Y")
     if ((cleaned["discount"] < 0) | (cleaned["amount"] < cleaned["discount"])).any():
         raise SalesReportError("Amounts and discounts contain invalid values.")
-    if cleaned.empty:
-        raise SalesReportError("No valid completed August transactions remain after bounded cleaning.")
     cleaned["net_sales"] = cleaned["amount"] - cleaned["discount"]
     cleaned["commission"] = pd.NA
     for column in ("transaction_id", "salesperson", "customer_id", "status"):
@@ -285,13 +290,13 @@ def _clean_transactions(transactions: pd.DataFrame) -> tuple[pd.DataFrame, dict[
     quality = {
         "original_transaction_rows": int(original_rows),
         "non_complete_rows_excluded": int((~status_complete).sum()),
-        "invalid_or_non_august_date_rows_excluded": int((~valid_august).sum()),
+        "invalid_date_rows_excluded": int((~valid_date).sum()),
         "invalid_amount_rows_excluded": int((~valid_amount).sum()),
         "missing_identity_rows_excluded": int((~valid_identity).sum()),
         "duplicate_transaction_rows_removed": int(eligible.sum() - len(cleaned)),
         "missing_discounts_filled_with_zero": missing_discounts,
     }
-    return cleaned, quality
+    return cleaned, quality, reporting_period
 
 
 def _clean_customers(customers: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:

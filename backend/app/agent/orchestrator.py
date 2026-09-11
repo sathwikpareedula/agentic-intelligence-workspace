@@ -10,31 +10,49 @@ from app.agent.models import (
     ArtifactReference,
     Complete,
     ExecutionStage,
+    ProviderUsageSummary,
     ToolObservation,
     TraceStep,
     WorkflowReference,
 )
 from app.models.retrieval import SourceReference
-from app.agent.providers import ModelProvider, ModelProviderError
+from app.agent.providers import ModelProvider, ModelProviderError, ProviderCallMetrics
 from app.agent.tools import ToolRegistry
 from app.agent.verification import EvidenceVerifier
 from app.services.sales_report import SalesReportError
 
 
 class AgentOrchestrator:
-    def __init__(self, provider: ModelProvider, registry: ToolRegistry, verifier: EvidenceVerifier | None = None) -> None:
+    def __init__(
+        self,
+        provider: ModelProvider,
+        registry: ToolRegistry,
+        verifier: EvidenceVerifier | None = None,
+        *,
+        input_cost_per_million: float | None = None,
+        output_cost_per_million: float | None = None,
+    ) -> None:
+        if (input_cost_per_million is None) != (output_cost_per_million is None):
+            raise ValueError("Provider input and output cost rates must be configured together.")
+        if any(value is not None and value < 0 for value in (input_cost_per_million, output_cost_per_million)):
+            raise ValueError("Provider cost rates cannot be negative.")
         self._provider = provider
         self._registry = registry
         self._verifier = verifier
+        self._input_cost_per_million = input_cost_per_million
+        self._output_cost_per_million = output_cost_per_million
 
     def execute(self, goal: str, max_iterations: int = 8) -> AgentExecution:
         started_at = datetime.now(timezone.utc)
         observations: list[ToolObservation] = []
         trace: list[TraceStep] = []
+        provider_metrics: list[ProviderCallMetrics] = []
         for step_number in range(1, max_iterations + 1):
+            previous_metrics = getattr(self._provider, "last_call_metrics", None)
             try:
                 decision = self._provider.decide(goal, observations)
             except ModelProviderError as exc:
+                _capture_provider_metrics(self._provider, previous_metrics, provider_metrics)
                 return self._finish(
                     goal,
                     started_at,
@@ -43,8 +61,10 @@ class AgentOrchestrator:
                     "failed",
                     failure_reason=str(exc),
                     failure_code=exc.code,
+                    provider_metrics=provider_metrics,
                 )
             except Exception:
+                _capture_provider_metrics(self._provider, previous_metrics, provider_metrics)
                 return self._finish(
                     goal,
                     started_at,
@@ -53,7 +73,9 @@ class AgentOrchestrator:
                     "failed",
                     failure_reason="Orchestrator provider failed unexpectedly.",
                     failure_code="provider_failure",
+                    provider_metrics=provider_metrics,
                 )
+            _capture_provider_metrics(self._provider, previous_metrics, provider_metrics)
             if isinstance(decision, Complete):
                 verification = self._verifier.verify(decision.claims, observations) if self._verifier else None
                 unresolved_failure = bool(
@@ -71,6 +93,7 @@ class AgentOrchestrator:
                     failure_reason=observations[-1].summary if unresolved_failure else None,
                     failure_code=observations[-1].error_code if unresolved_failure else None,
                     verification=verification,
+                    provider_metrics=provider_metrics,
                 )
 
             began = perf_counter()
@@ -127,10 +150,11 @@ class AgentOrchestrator:
             "iteration_limit",
             failure_reason=f"Agent reached the {max_iterations}-iteration limit.",
             failure_code="iteration_limit",
+            provider_metrics=provider_metrics,
         )
 
-    @staticmethod
     def _finish(
+        self,
         goal,
         started_at,
         trace,
@@ -140,6 +164,7 @@ class AgentOrchestrator:
         failure_reason=None,
         failure_code=None,
         verification=None,
+        provider_metrics=None,
     ) -> AgentExecution:
         return AgentExecution(
             goal=goal,
@@ -161,7 +186,61 @@ class AgentOrchestrator:
             stages=_execution_stages(goal, trace, observations, status, verification),
             warnings=list(dict.fromkeys(warning for item in observations for warning in item.warnings)),
             saved_workflow=_saved_workflow(observations),
+            provider_usage=_provider_usage(
+                provider_metrics or [],
+                self._input_cost_per_million,
+                self._output_cost_per_million,
+                str(getattr(self._provider, "provider_name", self._provider.__class__.__name__)),
+                str(getattr(self._provider, "model_name", "unspecified")),
+            ),
         )
+
+
+def _capture_provider_metrics(provider, previous, collected: list[ProviderCallMetrics]) -> None:
+    current = getattr(provider, "last_call_metrics", None)
+    if isinstance(current, ProviderCallMetrics) and current is not previous:
+        collected.append(current)
+
+
+def _provider_usage(
+    calls: list[ProviderCallMetrics],
+    input_cost_per_million: float | None,
+    output_cost_per_million: float | None,
+    provider_name: str,
+    model_name: str,
+) -> ProviderUsageSummary | None:
+    if not calls:
+        return None
+    inputs = [item.input_tokens for item in calls]
+    outputs = [item.output_tokens for item in calls]
+    totals = [item.total_tokens for item in calls]
+    input_tokens = sum(inputs) if all(item is not None for item in inputs) else None
+    output_tokens = sum(outputs) if all(item is not None for item in outputs) else None
+    total_tokens = sum(totals) if all(item is not None for item in totals) else None
+    cost = None
+    cost_basis = None
+    if (
+        input_tokens is not None
+        and output_tokens is not None
+        and input_cost_per_million is not None
+        and output_cost_per_million is not None
+    ):
+        cost = (
+            input_tokens * input_cost_per_million / 1_000_000
+            + output_tokens * output_cost_per_million / 1_000_000
+        )
+        cost_basis = "operator_configured"
+    return ProviderUsageSummary(
+        provider=provider_name,
+        model=model_name,
+        provider_calls=len(calls),
+        latency_ms=sum(item.latency_ms for item in calls),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        approximate_cost_usd=cost,
+        cost_basis=cost_basis,
+    )
 
 
 def _validation_summary(exc: ValidationError) -> str:

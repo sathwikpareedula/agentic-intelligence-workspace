@@ -98,7 +98,7 @@ def evaluate_product_cases(path: Path, sample_root: Path) -> dict:
         pd.read_csv(sample_root / "sales_customers.csv"),
         pd.read_csv(sample_root / "sales_targets.csv"),
         [PolicyEvidence(
-            text="August commission policy: Salespeople earn a commission rate of 5% of completed net sales after discounts.",
+            text="Monthly commission policy: Salespeople earn a commission rate of 5% of completed net sales after discounts.",
             source=_source(4, "commission_policy.pdf"),
         )],
     )

@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.agent.models import AgentExecution, AgentTaskRequest
 from app.agent.orchestrator import AgentOrchestrator
-from app.agent.providers import DeterministicGradesDemoProvider, DeterministicSalesDemoProvider, OpenAIModelProvider
+from app.agent.providers import DeterministicGradesDemoProvider, DeterministicSalesDemoProvider
 from app.agent.tools import ToolRegistry, general_task_tools, grade_task_tools
 from app.agent.verification import EvidenceVerifier
 from app.config import Settings, get_settings
 from app.dependencies import (
     build_retrieval_service,
+    build_orchestrator_provider,
     get_artifact_repository,
     get_execution_repository,
     get_workflow_service,
@@ -30,11 +31,8 @@ def execute_agent_task(
     if orchestrator is not None:
         return orchestrator.execute(payload.goal, payload.max_iterations)
 
-    if settings.app_mode == "production" and settings.orchestrator_provider != "openai":
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ORCHESTRATOR_PROVIDER=openai is required for production task execution.",
-        )
+    if settings.app_mode == "production" and settings.orchestrator_provider == "none":
+        raise HTTPException(status_code=503, detail="ORCHESTRATOR_PROVIDER is not configured for production task execution.")
     if payload.resources is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -72,11 +70,6 @@ def execute_agent_task(
                 detail="APP_MODE=demo supports the explicit deterministic grades workflow or the three-dataset plus one-policy north-star sales workflow.",
             )
     else:
-        if not settings.orchestrator_api_key:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="ORCHESTRATOR_API_KEY or OPENAI_API_KEY is required for production task execution.",
-            )
         retrieval_service = (
             build_retrieval_service(settings)
             if payload.resources.all_document_ids()
@@ -88,6 +81,7 @@ def execute_agent_task(
             payload.resources,
             artifact_repository,
             get_workflow_service(settings),
+            settings.allow_private_rest_targets,
         )
         if payload.resources.is_legacy_grades_demo:
             assert payload.resources.dataset is not None
@@ -102,16 +96,14 @@ def execute_agent_task(
                 if tool.name == "grades.required_final"
             )
         registry = ToolRegistry(tools)
-        provider = OpenAIModelProvider(
-            settings.orchestrator_api_key,
-            settings.orchestrator_model,
-            registry.specifications,
-            settings.orchestrator_timeout_seconds,
-            settings.orchestrator_max_retries,
-            settings.orchestrator_base_url,
-            settings.orchestrator_max_output_tokens,
-        )
-    orchestrator = AgentOrchestrator(provider, registry, EvidenceVerifier())
+        provider = build_orchestrator_provider(settings, registry.specifications)
+    orchestrator = AgentOrchestrator(
+        provider,
+        registry,
+        EvidenceVerifier(),
+        input_cost_per_million=settings.orchestrator_input_cost_per_million,
+        output_cost_per_million=settings.orchestrator_output_cost_per_million,
+    )
     execution = orchestrator.execute(payload.goal, payload.max_iterations)
     try:
         persist_execution(

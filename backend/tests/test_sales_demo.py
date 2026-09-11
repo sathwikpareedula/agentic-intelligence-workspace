@@ -28,7 +28,7 @@ from app.dependencies import _demo_repository, _deterministic_provider
 ROOT = Path(__file__).parents[2]
 
 
-def _evidence(text="August commission policy: Salespeople earn a commission rate of 5% of completed net sales after discounts."):
+def _evidence(text="Monthly commission policy: Salespeople earn a commission rate of 5% of completed net sales after discounts."):
     return [PolicyEvidence(text=text, source=SourceReference(document_id=UUID(int=1), filename="commission_policy.pdf", page_number=1, chunk_id=UUID(int=2)))]
 
 
@@ -63,6 +63,7 @@ def test_north_star_sales_report_known_outputs_and_provenance() -> None:
     assert result.verification_facts["total.net_sales"] == 2350
     assert result.verification_facts["total.commission"] == 117.5
     assert result.warnings
+    assert result.reporting_period == "August 2026"
     workbook = load_workbook(BytesIO(result.artifact.content), data_only=False)
     assert workbook.sheetnames == [
         "Executive Summary",
@@ -79,6 +80,31 @@ def test_north_star_sales_report_known_outputs_and_provenance() -> None:
     assert len(workbook["Executive Summary"]._charts) == 1
     assert len(workbook["Regional Performance"]._charts) == 1
     assert len(workbook["Salesperson Performance"]._charts) == 1
+
+
+def test_sales_report_supports_one_new_month_and_refuses_mixed_periods() -> None:
+    september = pd.read_csv(ROOT / "sample_data" / "september_transactions.csv")
+    customers = pd.read_csv(ROOT / "sample_data" / "sales_customers.csv")
+    targets = pd.read_csv(ROOT / "sample_data" / "sales_targets.csv")
+
+    result = build_august_sales_report(september, customers, targets, _evidence())
+
+    assert result.reporting_period == "September 2026"
+    assert result.verification_facts["total.net_sales"] == 3030
+    assert result.artifact.filename == "september_sales_management_report.xlsx"
+    workbook = load_workbook(BytesIO(result.artifact.content), data_only=False)
+    assert workbook["Executive Summary"]["B2"].value == "Completed September 2026 net sales after discounts"
+
+    mixed = pd.concat(
+        [september, pd.read_csv(ROOT / "sample_data" / "august_transactions.csv").iloc[[0]]],
+        ignore_index=True,
+    )
+    try:
+        build_august_sales_report(mixed, customers, targets, _evidence())
+    except SalesReportError as exc:
+        assert "multiple reporting months" in str(exc)
+    else:
+        raise AssertionError("A report spanning multiple months must fail closed.")
 
 
 def test_sales_report_refuses_missing_or_conflicting_policy() -> None:
@@ -177,7 +203,7 @@ def test_august_sales_demo_runs_through_public_http_and_downloads_workbook(monke
     assert body["verification"]["status"] == "verified_with_warnings"
     assert body["citations"][0]["filename"] == "commission_policy.pdf"
     assert body["artifacts"][0]["download_url"].startswith("/artifacts/")
-    assert body["saved_workflow"]["name"] == "August sales management report"
+    assert body["saved_workflow"]["name"] == "Monthly sales management report"
     assert [stage["name"] for stage in body["stages"]] == [
         "Goal",
         "Plan",
@@ -211,9 +237,9 @@ def test_august_sales_demo_runs_through_public_http_and_downloads_workbook(monke
             "step_overrides": {
                 "1": {
                     "transactions": {
-                        "filename": "new_august_transactions.csv",
+                        "filename": "september_transactions.csv",
                         "content_base64": base64.b64encode(
-                            (ROOT / "sample_data" / "august_transactions.csv").read_bytes()
+                            (ROOT / "sample_data" / "september_transactions.csv").read_bytes()
                         ).decode(),
                     }
                 }
@@ -226,8 +252,10 @@ def test_august_sales_demo_runs_through_public_http_and_downloads_workbook(monke
             "step_overrides": {
                 "1": {
                     "transactions": {
-                        "filename": "incompatible.csv",
-                        "content_base64": base64.b64encode(b"transaction_id,amount\nT1,100\n").decode(),
+                        "filename": "incompatible_transactions.csv",
+                        "content_base64": base64.b64encode(
+                            (ROOT / "sample_data" / "incompatible_transactions.csv").read_bytes()
+                        ).decode(),
                     }
                 }
             }
@@ -241,6 +269,22 @@ def test_august_sales_demo_runs_through_public_http_and_downloads_workbook(monke
     assert rerun.json()["status"] == "completed"
     assert compatible.status_code == 200
     assert compatible.json()["status"] == "completed"
+    compatible_total = next(
+        item for item in compatible.json()["facts"] if item["key"] == "total.net_sales"
+    )
+    assert compatible_total["value"] == 3030
+    comparison = client.post(
+        "/workflow-runs/compare",
+        json={
+            "previous_run_id": rerun.json()["run_id"],
+            "current_run_id": compatible.json()["run_id"],
+        },
+    )
+    assert comparison.status_code == 200
+    total_change = next(
+        item for item in comparison.json()["metrics"] if item["label"] == "total.net_sales"
+    )
+    assert total_change["absolute_change"] == 680
     assert drift.status_code == 200
     assert drift.json()["status"] == "failed"
     assert "Schema drift detected for transactions" in drift.json()["error"]

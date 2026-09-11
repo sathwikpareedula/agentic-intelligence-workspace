@@ -34,7 +34,7 @@ Alembic is the standard migration mechanism for the current Python/PostgreSQL st
 
 ## Verification Boundary
 
-Repository behavior, migration static SQL, demo/production selection, readiness failures, and deterministic evaluations are tested offline. An opt-in integration test and GitHub Actions pgvector service are implemented. The migration and repositories were not live-verified against the local PostgreSQL installation because no project credentials were configured; authentication was not modified or guessed.
+Repository behavior, migration static SQL, demo/production selection, readiness failures, and deterministic evaluations are tested offline. The opt-in integration contract is also live-verified against an isolated local PostgreSQL 17.4 database with pgvector 0.8.6: Alembic reaches head, vector rows persist and rank by exact cosine distance with filtering, rollback behavior is retained, and workflow/run/artifact/execution records survive repository recreation. The source evaluation additionally exercises catalog discovery and constrained reads through the external PostgreSQL adapter. Verification uses a restricted project role and ephemeral/local password resolution; credentials are never committed.
 
 ## When to Revisit
 

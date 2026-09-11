@@ -1,8 +1,9 @@
 """Typed responses for deterministic dataset inspection and profiling."""
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ColumnInspection(BaseModel):
@@ -12,15 +13,26 @@ class ColumnInspection(BaseModel):
     missing_percentage: float
 
 
+class DatasetProvenance(BaseModel):
+    source_type: Literal["upload", "postgres", "rest"]
+    identity: str = Field(min_length=1, max_length=500)
+    display_name: str = Field(min_length=1, max_length=255)
+    retrieved_at: datetime
+    config_fingerprint: str = Field(min_length=64, max_length=64)
+    row_count: int = Field(ge=0)
+    details: dict[str, str | int | None] = Field(default_factory=dict)
+
+
 class DatasetInspection(BaseModel):
     filename: str
-    file_type: Literal["csv", "xlsx"]
+    file_type: Literal["csv", "xlsx", "json", "parquet"]
     selected_sheet: str | None
     row_count: int
     column_count: int
     columns: list[str]
     column_details: list[ColumnInspection]
     duplicate_row_count: int
+    provenance: DatasetProvenance | None = None
 
 
 class NumericProfile(BaseModel):

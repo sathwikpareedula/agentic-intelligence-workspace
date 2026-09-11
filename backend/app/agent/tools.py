@@ -22,6 +22,8 @@ from app.models.template_transforms import (
     TransformProposalRequest,
     TransformTemplatePlan,
 )
+from app.models.analytics import AnalyticsPlan, AnalyticsSqlRequest
+from app.models.sources import PostgresImportRequest, PostgresSourceConfig, RestSourceConfig
 from app.services.datasets import inspect_dataset, load_dataset, profile_dataset
 from app.services.retrieval import RetrievalService
 from app.services.grades import calculate_required_final
@@ -29,6 +31,9 @@ from app.services.artifacts import ArtifactRepository, generate_artifact
 from app.services.sales_report import build_august_sales_report
 from app.services.transformations import apply_transformations, dataframe_result, join_datasets
 from app.services.template_transforms import execute_transform, propose_transform
+from app.services.postgres_source import import_source as import_postgres, inspect_table, list_catalog, test_connection
+from app.services.rest_source import import_rest
+from app.services.analytics import execute_dataset_analytics, execute_sql_analytics
 
 if TYPE_CHECKING:
     from app.services.workflows import WorkflowService
@@ -72,7 +77,7 @@ class ToolRegistry:
 
 class DatasetInput(ToolInput):
     filename: str = Field(min_length=1, max_length=255)
-    content_base64: str = Field(min_length=1)
+    content_base64: str = Field(min_length=1, max_length=14_000_000)
     sheet: str | None = None
 
     def content(self) -> bytes:
@@ -84,6 +89,10 @@ class DatasetInput(ToolInput):
 
 class TransformInput(DatasetInput):
     request: TransformRequest
+
+
+class AnalyticsExecuteInput(DatasetInput):
+    plan: AnalyticsPlan
 
 
 class JoinInput(ToolInput):
@@ -138,6 +147,10 @@ class BoundDatasetTransformInput(BoundDatasetReferenceInput):
     operations: list[Transformation] = Field(default_factory=list, max_length=30)
 
 
+class BoundAnalyticsInput(BoundDatasetReferenceInput):
+    plan: AnalyticsPlan
+
+
 class BoundDatasetJoinInput(ToolInput):
     left_dataset: str = Field(min_length=1, max_length=255)
     right_dataset: str = Field(min_length=1, max_length=255)
@@ -164,6 +177,20 @@ class BoundWorkflowRunInput(ToolInput):
     step_overrides: dict[Annotated[int, Field(ge=1)], dict[str, Any]] = Field(default_factory=dict)
 
 
+class BoundWorkflowHistoryInput(ToolInput):
+    workflow_id: UUID
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class BoundWorkflowRunDetailInput(ToolInput):
+    run_id: UUID
+
+
+class BoundWorkflowCompareInput(ToolInput):
+    previous_run_id: UUID
+    current_run_id: UUID
+
+
 class BoundTemplateSource(ToolInput):
     role: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
     dataset: str = Field(min_length=1, max_length=255)
@@ -185,6 +212,21 @@ class BoundTemplateExecuteInput(ToolInput):
     policy_evidence: list[PolicyEvidence] = Field(default_factory=list, max_length=20)
 
 
+class BoundNamedSourceInput(ToolInput):
+    source: str = Field(min_length=1, max_length=100)
+
+
+class BoundPostgresImportInput(BoundNamedSourceInput):
+    schema_name: str | None = Field(default=None, max_length=63, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    table: str | None = Field(default=None, max_length=63, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    select_sql: str | None = Field(default=None, max_length=4000)
+
+
+class BoundAnalyticsSqlInput(BoundNamedSourceInput):
+    select_sql: str = Field(min_length=12, max_length=4000)
+    max_rows: int | None = Field(default=None, ge=1, le=100_000)
+
+
 def dataset_tools() -> list[TypedTool[Any]]:
     def inspect(arguments: DatasetInput) -> ToolObservation:
         dataset = load_dataset(arguments.filename, arguments.content(), arguments.sheet)
@@ -201,11 +243,73 @@ def dataset_tools() -> list[TypedTool[Any]]:
         result = dataframe_result(apply_transformations(dataset.frame, arguments.request.operations)).model_dump(mode="json")
         return ToolObservation(success=True, summary=f"Transformation produced {result['row_count']} rows.", result=result)
 
+    def analytics(arguments: AnalyticsExecuteInput) -> ToolObservation:
+        dataset = load_dataset(arguments.filename, arguments.content(), arguments.sheet)
+        executed = execute_dataset_analytics(dataset, arguments.plan)
+        return _analytics_observation(executed)
+
     return [
         TypedTool("dataset.inspect", "Inspect a CSV/XLSX schema and quality counts.", DatasetInput, inspect),
         TypedTool("dataset.profile", "Profile deterministic numeric and categorical statistics.", DatasetInput, profile),
         TypedTool("dataset.transform", "Apply the closed set of validated dataframe operations.", TransformInput, transform),
+        TypedTool("analytics.execute", "Execute a typed deterministic analytical plan over an uploaded dataset.", AnalyticsExecuteInput, analytics),
     ]
+
+
+def source_tools(allow_private_rest: bool = False) -> list[TypedTool[Any]]:
+    def postgres_test(arguments: PostgresSourceConfig) -> ToolObservation:
+        result = test_connection(arguments)
+        return ToolObservation(success=True, summary=f"Connected to external database {result['database']} in read-only mode.", result=result)
+
+    def postgres_catalog(arguments: PostgresSourceConfig) -> ToolObservation:
+        catalog = list_catalog(arguments)
+        return ToolObservation(
+            success=True,
+            summary=f"Listed {len(catalog.tables)} tables across {len(catalog.schemas)} schemas.",
+            result=catalog.model_dump(mode="json"),
+        )
+
+    def postgres_import(arguments: PostgresImportRequest) -> ToolObservation:
+        imported = import_postgres(arguments)
+        return _imported_observation(imported, "Imported a read-only PostgreSQL result as a workspace dataset.")
+
+    def rest_import(arguments: RestSourceConfig) -> ToolObservation:
+        imported = import_rest(arguments, allow_private=allow_private_rest)
+        return _imported_observation(imported, "Imported a bounded REST JSON response as a workspace dataset.")
+
+    def analytics_sql(arguments: AnalyticsSqlRequest) -> ToolObservation:
+        executed = execute_sql_analytics(arguments)
+        return _analytics_observation(executed)
+
+    return [
+        TypedTool("source.postgres.test", "Test a read-only external PostgreSQL source using a password secret reference.", PostgresSourceConfig, postgres_test),
+        TypedTool("source.postgres.catalog", "List non-system schemas/tables from a read-only external PostgreSQL source.", PostgresSourceConfig, postgres_catalog),
+        TypedTool("source.postgres.import", "Import a bounded table or SELECT from a read-only external PostgreSQL source.", PostgresImportRequest, postgres_import),
+        TypedTool("source.rest.import", "GET JSON from an approved REST URL using secret header references, never raw tokens.", RestSourceConfig, rest_import),
+        TypedTool("analytics.sql", "Run one validated read-only SELECT against an external PostgreSQL source using a password secret reference.", AnalyticsSqlRequest, analytics_sql),
+    ]
+
+
+def _analytics_observation(executed) -> ToolObservation:
+    payload = executed.model_dump(mode="json")
+    return ToolObservation(
+        success=True,
+        summary=executed.explanation,
+        result=payload,
+        warnings=executed.warnings,
+    )
+
+
+def _imported_observation(imported, summary: str) -> ToolObservation:
+    return ToolObservation(
+        success=True,
+        summary=summary,
+        result={
+            "inspection": imported.inspection.model_dump(mode="json"),
+            "provenance": imported.provenance.model_dump(mode="json"),
+            "dataset": imported.dataset.model_dump(mode="json"),
+        },
+    )
 
 
 def template_transform_tool(artifact_repository: ArtifactRepository) -> TypedTool[TransformExecutionRequest]:
@@ -248,6 +352,7 @@ def general_task_tools(
     resources: AgentTaskResources,
     artifact_repository: ArtifactRepository,
     workflow_service: WorkflowService | None = None,
+    allow_private_rest: bool = False,
 ) -> list[TypedTool[Any]]:
     """Build a general, task-scoped registry that never exposes uploaded bodies to the model."""
 
@@ -268,6 +373,8 @@ def general_task_tools(
                 "datasets": list(datasets),
                 "document_ids": [str(item) for item in document_ids],
                 "workflow_ids": [str(item) for item in resources.workflow_ids],
+                "postgres_sources": [item.name for item in resources.postgres_sources],
+                "rest_sources": [item.name for item in resources.rest_sources],
             },
         )
 
@@ -308,6 +415,13 @@ def general_task_tools(
                 summary=f"Deterministic transformation produced {len(frame)} rows and {len(frame.columns)} columns.",
                 result=_bounded_dataframe_result(frame),
             )
+
+        def analytics_bound(arguments: BoundAnalyticsInput) -> ToolObservation:
+            if arguments.dataset not in inspected_datasets:
+                raise ValueError("Inspect the bound dataset before running analytics.")
+            dataset = _load_bound_dataset(datasets, arguments.dataset)
+            executed = execute_dataset_analytics(dataset, arguments.plan)
+            return _analytics_observation(executed)
 
         def join_bound(arguments: BoundDatasetJoinInput) -> ToolObservation:
             frame, diagnostics = _join_bound_datasets(datasets, arguments)
@@ -473,6 +587,12 @@ def general_task_tools(
                     transform_bound,
                 ),
                 TypedTool(
+                    "analytics.execute",
+                    "Execute a typed deterministic analytical plan over one inspected bound dataset. The model cannot invent numbers or run Python.",
+                    BoundAnalyticsInput,
+                    analytics_bound,
+                ),
+                TypedTool(
                     "dataset.join",
                     "Deterministically transform and join two bound datasets, return bounded result rows, and report unmatched rows and row-multiplication diagnostics.",
                     BoundDatasetJoinInput,
@@ -583,13 +703,115 @@ def general_task_tools(
             tools.append(
                 TypedTool(
                     "sales.north_star_report",
-                    "Use only after inspecting the three selected datasets and retrieving policy evidence. Deterministically clean completed August transactions, diagnose customer/target joins, analyze target performance and underperformance drivers, calculate policy-grounded commissions, generate professional charts and a management workbook, and save a schema-checked recipe.",
+                    "Use only after inspecting the three selected datasets and retrieving policy evidence. Deterministically clean completed transactions from one reporting month, diagnose customer/target joins, analyze target performance and underperformance drivers, calculate policy-grounded commissions, generate professional charts and a management workbook, and save a schema-checked recipe.",
                     GeneralSalesReportInput,
                     general_sales_report,
                 )
             )
 
+    if resources.postgres_sources:
+        postgres_by_name = {item.name: item for item in resources.postgres_sources}
+
+        def _bound_postgres(name: str) -> PostgresSourceConfig:
+            source = postgres_by_name.get(name)
+            if source is None:
+                raise ValueError("PostgreSQL source is not bound to this task.")
+            return PostgresSourceConfig(
+                host=source.host,
+                port=source.port,
+                database=source.database,
+                user=source.user,
+                password_secret_ref=source.password_secret_ref,
+                sslmode=source.sslmode if source.sslmode in {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"} else "prefer",
+            )
+
+        def postgres_catalog_bound(arguments: BoundNamedSourceInput) -> ToolObservation:
+            catalog = list_catalog(_bound_postgres(arguments.source))
+            return ToolObservation(
+                success=True,
+                summary=f"Listed {len(catalog.tables)} tables from bound PostgreSQL source {arguments.source}.",
+                result=catalog.model_dump(mode="json"),
+            )
+
+        def postgres_import_bound(arguments: BoundPostgresImportInput) -> ToolObservation:
+            from app.models.sources import PostgresTableRef
+
+            table = None
+            if arguments.schema_name and arguments.table:
+                table = PostgresTableRef(schema=arguments.schema_name, table=arguments.table)
+            imported = import_postgres(
+                PostgresImportRequest(source=_bound_postgres(arguments.source), table=table, select_sql=arguments.select_sql)
+            )
+            return _imported_observation(imported, f"Imported a read-only result from bound PostgreSQL source {arguments.source}.")
+
+        def analytics_sql_bound(arguments: BoundAnalyticsSqlInput) -> ToolObservation:
+            executed = execute_sql_analytics(
+                AnalyticsSqlRequest(source=_bound_postgres(arguments.source), select_sql=arguments.select_sql, max_rows=arguments.max_rows)
+            )
+            return _analytics_observation(executed)
+
+        tools.extend(
+            [
+                TypedTool(
+                    "source.postgres.catalog",
+                    "List non-system schemas and tables from a PostgreSQL source bound to this task. The model cannot supply credentials.",
+                    BoundNamedSourceInput,
+                    postgres_catalog_bound,
+                ),
+                TypedTool(
+                    "source.postgres.import",
+                    "Import a bound PostgreSQL table or a single validated SELECT into a workspace dataset. Credentials stay server-side.",
+                    BoundPostgresImportInput,
+                    postgres_import_bound,
+                ),
+                TypedTool(
+                    "analytics.sql",
+                    "Run one validated read-only SELECT against a PostgreSQL source bound to this task. The model cannot supply credentials or write SQL.",
+                    BoundAnalyticsSqlInput,
+                    analytics_sql_bound,
+                ),
+            ]
+        )
+
+    if resources.rest_sources:
+        rest_by_name = {item.name: item for item in resources.rest_sources}
+
+        def rest_import_bound(arguments: BoundNamedSourceInput) -> ToolObservation:
+            source = rest_by_name.get(arguments.source)
+            if source is None:
+                raise ValueError("REST source is not bound to this task.")
+            imported = import_rest(
+                RestSourceConfig(
+                    url=source.url,
+                    header_secret_refs=source.header_secret_refs,
+                    query=source.query,
+                    records_key=source.records_key,
+                ),
+                allow_private=allow_private_rest,
+            )
+            return _imported_observation(imported, f"Imported JSON from bound REST source {arguments.source}.")
+
+        tools.append(
+            TypedTool(
+                "source.rest.import",
+                "GET JSON from a REST source bound to this task. The model cannot invent URLs or supply raw tokens.",
+                BoundNamedSourceInput,
+                rest_import_bound,
+            )
+        )
+
     if allowed_workflows and workflow_service is not None:
+        def require_bound_run(run_id: UUID):
+            from app.services.workflows import WorkflowRunNotFoundError
+
+            try:
+                run = workflow_service.get_run(run_id)
+            except WorkflowRunNotFoundError as exc:
+                raise ValueError("The requested workflow run is not bound to this task.") from exc
+            if run.workflow_id not in allowed_workflows:
+                raise ValueError("The requested workflow run is not bound to this task.")
+            return run
+
         def run_workflow(arguments: BoundWorkflowRunInput) -> ToolObservation:
             if arguments.workflow_id not in allowed_workflows:
                 raise ValueError("The requested workflow is not bound to this task.")
@@ -601,7 +823,7 @@ def general_task_tools(
                     if run.status == "completed"
                     else f"Workflow failed at step {run.failed_step}: {run.error}"
                 ),
-                result=run.model_dump(mode="json"),
+                result=_workflow_run_summary(run, include_facts=True),
                 error_code=None if run.status == "completed" else "workflow_failed",
                 artifact_ids=[
                     artifact_id
@@ -624,6 +846,59 @@ def general_task_tools(
             )
         )
 
+        def list_workflow_runs(arguments: BoundWorkflowHistoryInput) -> ToolObservation:
+            if arguments.workflow_id not in allowed_workflows:
+                raise ValueError("The requested workflow is not bound to this task.")
+            runs = workflow_service.list_runs(arguments.workflow_id, arguments.limit, 0)
+            return ToolObservation(
+                success=True,
+                summary=f"Listed {len(runs)} immutable runs for the bound workflow.",
+                result={"runs": [_workflow_run_summary(run, include_facts=False) for run in runs]},
+            )
+
+        def get_workflow_run(arguments: BoundWorkflowRunDetailInput) -> ToolObservation:
+            run = require_bound_run(arguments.run_id)
+            return ToolObservation(
+                success=True,
+                summary=f"Loaded workflow run {run.run_id}.",
+                result=_workflow_run_summary(run, include_facts=True),
+            )
+
+        def compare_workflow_runs(arguments: BoundWorkflowCompareInput) -> ToolObservation:
+            require_bound_run(arguments.previous_run_id)
+            require_bound_run(arguments.current_run_id)
+            comparison = workflow_service.compare_runs(
+                arguments.previous_run_id, arguments.current_run_id
+            )
+            return ToolObservation(
+                success=True,
+                summary="Compared two completed workflow runs using saved deterministic facts.",
+                result=comparison.model_dump(mode="json"),
+            )
+
+        tools.extend(
+            [
+                TypedTool(
+                    "workflow.list_runs",
+                    "List immutable run history only for a workflow bound to this task.",
+                    BoundWorkflowHistoryInput,
+                    list_workflow_runs,
+                ),
+                TypedTool(
+                    "workflow.get_run",
+                    "Inspect safe metadata and deterministic facts for a run of a bound workflow.",
+                    BoundWorkflowRunDetailInput,
+                    get_workflow_run,
+                ),
+                TypedTool(
+                    "workflow.compare_runs",
+                    "Deterministically compare two completed runs belonging to workflows bound to this task.",
+                    BoundWorkflowCompareInput,
+                    compare_workflow_runs,
+                ),
+            ]
+        )
+
     return tools
 
 
@@ -632,6 +907,30 @@ def _load_bound_dataset(resources: dict[str, AgentDatasetResource], filename: st
     if resource is None:
         raise ValueError(f"Dataset '{filename}' is not bound to this task.")
     return load_dataset(resource.filename, resource.content(), resource.sheet)
+
+
+def _workflow_run_summary(run, *, include_facts: bool) -> dict[str, Any]:
+    result = {
+        "run_id": str(run.run_id),
+        "workflow_id": str(run.workflow_id),
+        "version": run.version,
+        "status": run.status,
+        "started_at": run.started_at.isoformat(),
+        "completed_at": run.completed_at.isoformat(),
+        "failed_step": run.failed_step,
+        "error": run.error,
+        "lifecycle": [item.model_dump(mode="json") for item in run.lifecycle],
+        "input_snapshots": [item.model_dump(mode="json") for item in run.input_snapshots],
+        "verification": run.verification.model_dump(mode="json") if run.verification else None,
+        "warnings": run.warnings,
+        "artifacts": [item.model_dump(mode="json") for item in run.artifacts],
+        "drift_findings": [item.model_dump(mode="json") for item in run.drift_findings],
+        "step_summaries": [item.model_dump(mode="json") for item in run.step_summaries],
+        "diagnostics": [item.model_dump(mode="json") for item in run.diagnostics],
+    }
+    if include_facts:
+        result["facts"] = [item.model_dump(mode="json") for item in run.facts]
+    return result
 
 
 def _join_bound_datasets(resources: dict[str, AgentDatasetResource], arguments: BoundDatasetJoinInput):
@@ -775,7 +1074,7 @@ def sales_report_tool(artifact_repository: ArtifactRepository | None = None) -> 
 
     return TypedTool(
         "sales.august_report",
-        "Clean August transactions, compare regional targets, calculate cited commissions, and create a management workbook.",
+        "Clean one month of completed transactions, compare regional targets, calculate cited commissions, and create a management workbook.",
         SalesReportInput,
         report,
     )
@@ -851,6 +1150,7 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
             "join_diagnostics": generated.join_diagnostics.model_dump(mode="json"),
             "target_join_diagnostics": generated.target_join_diagnostics,
             "data_quality": generated.data_quality,
+            "reporting_period": generated.reporting_period,
             "warnings": generated.warnings,
             "verification_facts": generated.verification_facts,
             "trace_metadata": {
@@ -915,7 +1215,7 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
         ExecutionStage(
             name="Calculate commissions",
             status="completed",
-            explanation=f"Applied the cited {generated.commission_rate * 100:g}% policy rate to completed August net sales for {len(generated.commissions)} salespeople.",
+            explanation=f"Applied the cited {generated.commission_rate * 100:g}% policy rate to completed {generated.reporting_period} net sales for {len(generated.commissions)} salespeople.",
             tool_name="sales.north_star_report",
             row_counts={"salespeople": len(generated.commissions)},
             evidence_ids=source_ids,
@@ -939,7 +1239,7 @@ def _sales_observation(generated, artifact_repository: ArtifactRepository | None
         )
     return ToolObservation(
         success=True,
-        summary=f"Prepared August report for {len(generated.regional_performance)} regions and {len(generated.commissions)} salespeople.",
+        summary=f"Prepared {generated.reporting_period} report for {len(generated.regional_performance)} regions and {len(generated.commissions)} salespeople.",
         result=result,
         artifact_ids=[str(generated.artifact.artifact_id)],
         source_ids=source_ids,
@@ -970,7 +1270,7 @@ def _save_sales_workflow(
         ).columns
     return workflow_service.create(
         WorkflowCreate(
-            name="August sales management report",
+            name="Monthly sales management report",
             steps=[
                 WorkflowStep(
                     tool="sales.august_report",

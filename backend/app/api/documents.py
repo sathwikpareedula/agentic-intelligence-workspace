@@ -15,6 +15,7 @@ from app.services.pdf_documents import (
     UnsupportedPdfTypeError,
 )
 from app.services.retrieval import RetrievalService
+from app.services.text_documents import TextDocumentError, TextTooLargeError, UnsupportedTextTypeError
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -32,17 +33,17 @@ async def ingest_document(
     await file.close()
     try:
         return await run_in_threadpool(
-            service.ingest_pdf,
+            service.ingest_document,
             filename,
             content,
             chunk_size or settings.chunk_size,
             settings.chunk_overlap if chunk_overlap is None else chunk_overlap,
         )
-    except PdfTooLargeError as exc:
+    except (PdfTooLargeError, TextTooLargeError) as exc:
         raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)) from exc
-    except UnsupportedPdfTypeError as exc:
+    except (UnsupportedPdfTypeError, UnsupportedTextTypeError) as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
-    except (PdfDocumentError, NoExtractableTextError) as exc:
+    except (PdfDocumentError, NoExtractableTextError, TextDocumentError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except EmbeddingError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

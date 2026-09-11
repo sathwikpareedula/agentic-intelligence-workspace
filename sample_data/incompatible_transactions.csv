@@ -1,0 +1,2 @@
+transaction_id,date,salesperson,customer_id,amount,status
+T3001,2026-10-03,Alice,C001,1200,complete

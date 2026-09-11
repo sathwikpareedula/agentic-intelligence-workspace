@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import psycopg
 
 
-MIGRATION_HEAD = "20260903_0001"
+MIGRATION_HEAD = "20260909_0004"
 REQUIRED_TABLES = (
     "documents",
     "document_chunks",

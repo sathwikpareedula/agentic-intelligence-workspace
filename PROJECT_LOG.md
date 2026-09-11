@@ -34,6 +34,15 @@ Bounded execution, mixed reasoning, verification, workflows, artifacts, sales an
 - 2026-09-04: Added controlled generalized-agent evaluation and tests for malformed provider output, timeout/failure mapping, invalid arguments, replanning, iteration limits, mixed structured/unstructured tasks, artifacts, workflows, and insufficient evidence.
 - 2026-09-06: Added Transform-to-Template V1 with typed CSV/XLSX target inspection, source profiling/key candidates, deterministic mapping proposals, structured clarification/refusal, guarded joins and derivations, evidence-bound policy rates, exact template writing/reopen validation, per-field provenance, reusable drift-checked workflows, task-scoped agent tools, public multipart APIs, focused frontend workflow, canonical fixtures, and an 18-case controlled evaluation.
 - 2026-09-07: Completed Phase 1 Transform-to-Template integration with user-confirmed mapping controls, fixture-scoped demo rules, formula-origin-aware translation and reopen verification, confirmed mapping persistence, CI evaluation coverage, responsive browser QA, and final backend/frontend/security gates.
+- 2026-09-07: Added Phase 2 bounded JSON/Parquet/TXT adapters, a read-only external PostgreSQL connector, and a GET-only REST JSON connector with SSRF checks, secret references, provenance, task-scoped tools, source evaluation cases, and a minimal source UI. DOCX was deferred.
+- 2026-09-07: Independent Phase 2/3 review hardened custom secret-header redirects, query-secret refusal, pinned-source reruns, PostgreSQL lexical/read-only defenses, Parquet expansion/type bounds, analytics edge semantics, grouped fact identity, stale-fact refusal, and unit-aware numeric verification. Final verification is recorded in the review handoff rather than inferred from pre-edit results.
+- 2026-09-07: Added Phase 3 typed analytical plans executed with pandas, named numeric facts grounded in the existing verifier, optional validated read-only SQL reuse, task-scoped tools, a focused analytics UI, and a dedicated evaluation family. DuckDB was not introduced.
+- 2026-09-07: Added immutable reusable workflow runs with explicit terminal lifecycle, definition/source/schema fingerprints, type-drift blocking, safe run history APIs, persisted deterministic facts/verification/warnings/artifacts, task-scoped history tools, and deterministic same-workflow “What Changed?” comparisons. Added a two-period fixture/evaluator and focused workflow-run UI without introducing asynchronous infrastructure or model arithmetic.
+- 2026-09-08: Extended the same run snapshots/comparison with per-column missing counts, duplicate counts, bounded complete category identities, explicit added/removed columns and type changes, existing join/data-quality diagnostic deltas, and compact tool-step outcomes. The UI presents these as deterministic drift and trust changes, not anomalies.
+- 2026-09-08: Strengthened the workflow-centered browser experience with workflow identity and trust summaries, immutable lifecycle badges, explicit compatible-run selection, comparison-to-run provenance links, and compact before/current metric bars derived only from persisted deterministic facts.
+- 2026-09-08: Added a 12-case flagship recurring-sales evaluation through public APIs: policy-grounded transform setup, a persisted analytics-plus-artifact workflow, August and September runs, real workbook download, deterministic comparison/provenance, and an inspectable blocked schema-drift run. CI now executes the same scenario.
+- 2026-09-09: Added a native loopback-only Ollama provider and resumable product-specific model evaluation. Fixed-setting local evidence found no recommended default: `llama3.2:3b` completed 0/10 cases with roughly 120-second median latency, `gemma3:4b` could not initialize schema-constrained generation in the installed runtime, and `qwen3.5:4b` did not return a bounded preflight decision within 60 seconds.
+- 2026-09-10: Live-verified the isolated PostgreSQL 17.4 and pgvector 0.8.6 contract at Alembic head `20260909_0004`, including transactional document/chunk writes, exact filtered cosine ordering, rollback behavior, durable workflow/run/artifact/execution reloads, and read-only external-source enforcement.
 
 ## Technologies Actually Used
 
@@ -50,6 +59,7 @@ Bounded execution, mixed reasoning, verification, workflows, artifacts, sales an
 - pypdf for non-executing PDF text extraction.
 - psycopg and pgvector for the production-intended PostgreSQL vector repository.
 - OpenAI SDK for configured hosted embedding and Responses-based orchestration providers.
+- Ollama's native local chat API for credential-free, loopback-only provider evaluation.
 
 Add technologies here only after they are actually used in the project.
 
@@ -58,7 +68,7 @@ Add technologies here only after they are actually used in the project.
 - Prefer one orchestrator with typed deterministic tools for the initial architecture.
 - Keep calculations, transformations, joins, statistics, and schema checks in deterministic code.
 - Defer implementation technology adoption until its milestone requires it.
-- Defer DuckDB and SQL execution because the current typed pandas operations satisfy the bounded analytics scope without introducing another query and security boundary.
+- Defer DuckDB because typed pandas analytical plans satisfy the Phase 3 metric set without a second SQL engine. Revisit only if local multi-dataset SQL is required.
 - Use PostgreSQL with pgvector as the retrieval store, exact cosine search initially, and interfaces for both vector storage and embedding providers.
 - Use one task-scoped orchestrator with strictly structured provider decisions; do not expose uploaded bodies or add arbitrary execution to gain generality.
 
@@ -70,23 +80,23 @@ Material decisions should receive a record under `docs/decisions/`.
 
 ## Evaluation Results
 
-- Backend test suite: 132 tests passed, 1 opt-in live PostgreSQL integration test skipped, and 2 framework deprecation warnings were reported.
+- Backend test suite: 205 tests passed in the live-enabled run, including both opt-in isolated PostgreSQL integration cases.
 - Controlled offline retrieval evaluation: 5 queries at `top_k=2`, Hit@2 = 1.0 and mean reciprocal rank = 1.0. This measures the fixed token-hash test corpus, not hosted embedding quality or production recall.
-- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Controlled north-star evaluation: 14/14 cases passed. Controlled Transform-to-Template evaluation: 18/18 cases passed. These offline evaluations do not measure hosted-model quality, latency, or cost.
+- Controlled product evaluation: 7/7 cases passed. Controlled scripted-provider agent evaluation: 5/5 cases passed. Controlled north-star evaluation: 14/14 cases passed. Controlled Transform-to-Template evaluation: 18/18 cases passed. Controlled source/connector evaluation: 17/17 cases passed with both live PostgreSQL cases executed and zero skips. Controlled analytics evaluation: 18/18 cases passed. Controlled workflow-run comparison and drift evaluation: 15/15 cases passed. Controlled recurring-sales public-API evaluation: 12/12 cases passed. Except for the explicitly live source cases, these controlled evaluations do not measure hosted-model quality, hosted embedding quality, or production data.
 - Frontend verification: TypeScript passed, the Next.js 16.3.4 optimized production build passed, and `npm audit --audit-level=high` reported zero vulnerabilities without changing `package.json` or `package-lock.json`.
 - Browser verification: the canonical Transform-to-Template fixture completed through the live local UI with proposal visibility, 13 passing validation checks, policy provenance, workbook download, and saved-workflow visibility; the narrow responsive layout was visually checked.
 - Workbook verification: the generated canonical artifact reopened in both the backend validation and the spreadsheet inspection runtime, preserved both sheets and their order, retained translated formulas in `F2:F4`, neutralized the formula-like customer value, and rendered both worksheets for visual review.
-- No real orchestrator request was run because neither `ORCHESTRATOR_API_KEY` nor `OPENAI_API_KEY` was available.
+- No hosted orchestrator request was run because neither `ORCHESTRATOR_API_KEY` nor `OPENAI_API_KEY` was available. Real local Ollama requests were run through the provider adapter; their bounded hardware/runtime results are documented in `docs/MODEL_EVALUATION.md` and do not establish a recommended local default.
 - Docker configuration was added but could not be executed or validated because Docker is unavailable in this environment.
 
 ## Performance Results
 
-No performance measurements have been run yet.
+- Local Ollama evaluation measured runtime and latency under one fixed CPU-only configuration. `llama3.2:3b` completed the ten-case suite with roughly 120.01-second median latency and 0/10 passes; `qwen3.5:4b` timed out during a 60-second compatibility preflight; `gemma3:4b` failed before generation because the installed runtime could not load the vocabulary required for schema formatting. These are machine/runtime-specific compatibility results, not general model rankings.
 
 ## Security Decisions
 
 - Security risks and design requirements are tracked from the engineering-foundation phase.
-- Dataset uploads are limited to 10 MiB, processed in memory without permanent persistence, restricted to `.csv` and `.xlsx`, and parsed without executing formulas, macros, or uploaded code.
+- Dataset uploads are limited to 10 MiB, processed in memory without permanent persistence, restricted to `.csv`, `.xlsx`, `.json`, and `.parquet`, and parsed without executing formulas, macros, or uploaded code. UTF-8 `.txt` documents reuse retrieval chunking as untrusted evidence.
 - Transformation requests use a closed typed operation set with unknown fields rejected; no arbitrary Python or SQL execution is available.
 - Exported artifacts remain request-scoped in memory and use service-generated sanitized filenames rather than user-controlled filesystem paths.
 - Formula-like text is neutralized during CSV/XLSX export to prevent uploaded strings from becoming active spreadsheet formulas.

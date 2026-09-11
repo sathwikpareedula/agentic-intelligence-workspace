@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.gitignore
+coverage
+test-results
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+.env*

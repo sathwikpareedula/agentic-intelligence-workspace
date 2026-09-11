@@ -45,7 +45,7 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
                     tool="dataset.inspect",
                     arguments={
                         "filename": "data.csv",
-                        "content_base64": base64.b64encode(b"id\n1\n").decode("ascii"),
+                        "content_base64": base64.b64encode(b"id\n1\n2\n").decode("ascii"),
                     },
                     expected_columns=["id"],
                 )
@@ -88,6 +88,12 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
         assert restarted_service.get(workflow.workflow_id) == workflow
         workflow_run = restarted_service.rerun(workflow.workflow_id, {})
         assert workflow_run.status == "completed"
+        persisted_run = workflow_repository.get_run(workflow_run.run_id)
+        persisted_history = workflow_repository.list_runs(workflow.workflow_id, 10, 0)
+        assert persisted_run is not None
+        assert persisted_run.definition_fingerprint == workflow_run.definition_fingerprint
+        assert persisted_run.input_snapshots[0].row_count == 2
+        assert persisted_history[0].run_id == workflow_run.run_id
         artifact_repository.save(artifact)
         assert PostgresArtifactRepository(
             database_url, LocalArtifactStore(tmp_path)
@@ -110,3 +116,80 @@ def test_live_pgvector_and_durable_repositories(tmp_path) -> None:
                 "DELETE FROM documents WHERE id = ANY(%s)",
                 ([first_document.document_id, second_document.document_id],),
             )
+
+
+@pytest.mark.skipif(
+    os.getenv("ALLOW_DATABASE_INTEGRATION_TESTS") != "1" or not os.getenv("TEST_DATABASE_URL"),
+    reason="Set ALLOW_DATABASE_INTEGRATION_TESTS=1 and TEST_DATABASE_URL for an isolated project test database.",
+)
+def test_external_postgres_connector_is_read_only_and_importable() -> None:
+    from urllib.parse import unquote, urlparse
+
+    from app.models.sources import PostgresTableRef
+    from app.models.analytics import AnalyticsSqlRequest
+    from app.services.analytics import execute_sql_analytics
+    from app.services.postgres_source import PostgresSourceError, import_source, list_catalog, test_connection, validate_select
+    from app.models.sources import PostgresImportRequest, PostgresSourceConfig
+
+    database_url = os.environ["TEST_DATABASE_URL"]
+    parsed = urlparse(database_url)
+    prior_password = os.getenv("EXTERNAL_PG_PASSWORD")
+    password = unquote(parsed.password) if parsed.password is not None else (prior_password or "")
+    if not password:
+        pytest.fail(
+            "Provide the isolated database password in TEST_DATABASE_URL or EXTERNAL_PG_PASSWORD."
+        )
+    os.environ["EXTERNAL_PG_PASSWORD"] = password
+    with psycopg.connect(database_url) as connection:
+        connection.execute("CREATE SCHEMA IF NOT EXISTS external_demo")
+        connection.execute("DROP TABLE IF EXISTS external_demo.orders")
+        connection.execute("DROP SEQUENCE IF EXISTS external_demo.review_sequence")
+        connection.execute(
+            "CREATE TABLE external_demo.orders (order_id text PRIMARY KEY, customer_name text, amount numeric)"
+        )
+        connection.execute("INSERT INTO external_demo.orders VALUES ('O-1', 'Ada', 10)")
+        connection.execute("CREATE SEQUENCE external_demo.review_sequence")
+        connection.commit()
+    config = PostgresSourceConfig(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 5432,
+        database=parsed.path.lstrip("/"),
+        user=parsed.username or "postgres",
+        password_secret_ref="EXTERNAL_PG_PASSWORD",
+        sslmode="disable",
+    )
+    try:
+        assert test_connection(config)["read_only_session"] is True
+        catalog = list_catalog(config)
+        names = {(item.schema_name, item.name) for item in catalog.tables}
+        assert ("external_demo", "orders") in names
+        imported = import_source(
+            PostgresImportRequest(source=config, table=PostgresTableRef(schema="external_demo", table="orders"))
+        )
+        assert imported.inspection.row_count == 1
+        assert imported.provenance.source_type == "postgres"
+        assert password not in imported.model_dump_json()
+        sql_result = execute_sql_analytics(
+            AnalyticsSqlRequest(source=config, select_sql="SELECT count(*) AS total FROM external_demo.orders")
+        )
+        assert sql_result.verification_facts["sql.total"] == 1
+        with pytest.raises(PostgresSourceError, match="read-only"):
+            import_source(
+                PostgresImportRequest(
+                    source=config,
+                    select_sql="SELECT nextval('external_demo.review_sequence') AS value",
+                )
+            )
+        with pytest.raises(Exception):
+            validate_select("INSERT INTO external_demo.orders VALUES ('x')")
+        with pytest.raises(Exception):
+            import_source(PostgresImportRequest(source=config, select_sql="INSERT INTO external_demo.orders VALUES ('x')"))
+    finally:
+        if prior_password is None:
+            os.environ.pop("EXTERNAL_PG_PASSWORD", None)
+        else:
+            os.environ["EXTERNAL_PG_PASSWORD"] = prior_password
+        with psycopg.connect(database_url) as connection:
+            connection.execute("DROP TABLE IF EXISTS external_demo.orders")
+            connection.execute("DROP SEQUENCE IF EXISTS external_demo.review_sequence")
+            connection.commit()

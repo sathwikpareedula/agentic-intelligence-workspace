@@ -1,0 +1,5 @@
+transaction_id,date,salesperson,customer_id,amount,discount,status
+T2001,2026-09-03,Alice,C001,1200,100,complete
+T2002,2026-09-08,Bob,C002,950,0,complete
+T2003,2026-09-15,Alice,C003,600,20,complete
+T2004,2026-09-20,Cara,C004,400,0,complete

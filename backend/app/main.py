@@ -19,14 +19,18 @@ from app.api.health import router as health_router
 from app.api.retrieval import router as retrieval_router
 from app.api.sales import router as sales_router
 from app.api.transformations import router as transformations_router
-from app.api.workflows import router as workflows_router
+from app.api.workflows import router as workflows_router, run_router as workflow_runs_router
 from app.api.template_transforms import router as template_transforms_router
+from app.api.sources import router as sources_router
+from app.api.analytics import router as analytics_router
+from app.config import get_settings
+
 app = FastAPI(title="Agentic Intelligence Workspace")
 app.state.artifact_repository = None
 app.state.workflow_service = None
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=list(get_settings().cors_allowed_origins),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,7 +58,18 @@ async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return _error_response(request, 422, "validation_error", jsonable_encoder(exc.errors()))
+    safe_errors = []
+    for error in exc.errors():
+        safe_error = dict(error)
+        safe_error.pop("input", None)
+        safe_error.pop("ctx", None)
+        safe_errors.append(safe_error)
+    return _error_response(
+        request,
+        422,
+        "validation_error",
+        jsonable_encoder(safe_errors),
+    )
 
 
 @app.exception_handler(Exception)
@@ -114,4 +129,7 @@ app.include_router(documents_router)
 app.include_router(retrieval_router)
 app.include_router(sales_router)
 app.include_router(workflows_router)
+app.include_router(workflow_runs_router)
 app.include_router(template_transforms_router)
+app.include_router(sources_router)
+app.include_router(analytics_router)

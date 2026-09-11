@@ -1,0 +1,5 @@
+region,salesperson,net_sales,target,month
+North,Alice,1025,2000,2026-09
+North,Alice,500,2000,2026-09
+South,Bob,950,1000,2026-09
+East,Cara,300,600,2026-09

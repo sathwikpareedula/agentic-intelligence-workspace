@@ -69,7 +69,9 @@ def generate_management_workbook(
         provenance_frame = pd.DataFrame(
             list((provenance or {}).items()), columns=["Property", "Value"]
         )
-        provenance_frame.to_excel(writer, sheet_name="Provenance", index=False)
+        _sanitize_spreadsheet_strings(provenance_frame).to_excel(
+            writer, sheet_name="Provenance", index=False
+        )
         numeric_columns = [index + 1 for index, column in enumerate(frame.columns) if pd.api.types.is_numeric_dtype(frame[column])]
         if numeric_columns and len(frame) > 0:
             chart = BarChart()
@@ -98,6 +100,7 @@ def generate_sales_management_workbook(
     regional_performance: pd.DataFrame,
     commissions: pd.DataFrame,
     *,
+    reporting_period: str,
     data_quality: dict[str, object],
     customer_join_diagnostics,
     target_join_diagnostics: dict[str, int],
@@ -115,7 +118,7 @@ def generate_sales_management_workbook(
         {
             "Metric": [
                 "Report scope",
-                "Completed August transactions",
+                f"Completed {reporting_period} transactions",
                 "Source transaction rows",
                 "Regions represented",
                 "Salespeople represented",
@@ -128,7 +131,7 @@ def generate_sales_management_workbook(
                 "Verification note",
             ],
             "Value": [
-                "Completed August net sales after discounts",
+                f"Completed {reporting_period} net sales after discounts",
                 len(cleaned_transactions),
                 data_quality.get("original_transaction_rows", len(cleaned_transactions)),
                 len(regional_performance),
@@ -248,7 +251,7 @@ def generate_sales_management_workbook(
         _style_sales_workbook(writer.book, frames)
 
     return GeneratedArtifact(
-        filename="august_sales_management_report.xlsx",
+        filename=f"{reporting_period.split()[0].lower()}_sales_management_report.xlsx",
         format="xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         row_count=len(regional_performance),
