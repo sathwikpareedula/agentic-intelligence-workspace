@@ -21,11 +21,13 @@ Instead of asking an AI assistant to repeat the same analysis every month, the w
 
 **Backend:** Python · FastAPI · Pydantic · pandas · PostgreSQL · pgvector · Alembic
 
-**Frontend:** Next.js · TypeScript
+**Frontend:** Next.js · React · TypeScript
 
-**AI / Orchestration:** OpenAI-compatible providers · Ollama · typed tool calling · bounded agent loops
+**AI / Agentic Systems:** RAG · embeddings · vector search · OpenAI-compatible providers · Ollama · typed tool calling · bounded agent loops
 
-**Data / Retrieval:** CSV · XLSX · JSON · Parquet · PDF · REST · read-only PostgreSQL
+**Data / Retrieval:** CSV · XLSX · JSON · Parquet · PDF · REST APIs · read-only PostgreSQL
+
+**Engineering:** Git · GitHub Actions · pytest · Docker
 
 ---
 
