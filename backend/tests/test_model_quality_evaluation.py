@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent.providers import FakeModelProvider, OllamaModelProvider, ProviderCallMetrics
+from app.agent.providers import FakeModelProvider, ModelProviderError, OllamaModelProvider, ProviderCallMetrics
 from app.evaluation.model_quality import (
     FixtureProviderFactory,
     OllamaProviderFactory,
@@ -89,6 +89,29 @@ def test_model_evaluation_aggregates_usage_and_operator_supplied_cost() -> None:
     assert metrics["output_tokens_per_second_mean"] == 5
     assert metrics["approximate_cost_usd"] > 0
     assert metrics["cost_basis"]["source"] == "operator_supplied"
+
+
+def test_model_evaluation_reports_sanitized_provider_failure_reason() -> None:
+    class FailingProvider:
+        last_call_metrics = None
+
+        def decide(self, goal, observations):
+            raise ModelProviderError("provider_timeout", "Orchestrator provider timed out.")
+
+    class FailingFactory(FixtureProviderFactory):
+        provider_name = "failing-fixture"
+        model_name = "failure-contract"
+
+        def create(self, case, tool_specifications):
+            return FailingProvider()
+
+    result = evaluate_model_suite(ROOT / "evals" / "model_cases.json", FailingFactory())
+    case = result["cases"][0]
+
+    assert case["scenario_name"] == case["capability"]
+    assert case["provider_error"] == "provider_timeout"
+    assert case["provider_failure_reason"] == "Orchestrator provider timed out."
+    assert case["structured_output_valid"] is False
 
 
 def test_ollama_evaluation_factory_is_keyless_and_provider_native() -> None:

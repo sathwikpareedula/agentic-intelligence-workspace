@@ -23,6 +23,8 @@ Server-only variables belong on the backend or migration service:
 
 The checked-in `.env.example` contains placeholders only. Copy it to an untracked `.env`, replace every `replace-me`, and keep that file out of source control and image build contexts.
 
+Compose forwards the documented backend limits, embedding settings, orchestrator controls, and the example `EXTERNAL_PG_PASSWORD` and `REST_BEARER_TOKEN` secret references. If a saved external-source definition names a different environment variable, add that exact variable explicitly to the backend service environment; Compose does not automatically expose arbitrary host variables.
+
 `ORCHESTRATOR_PROVIDER=ollama` selects the native local adapter without a provider credential. Its base URL must be a literal loopback URL such as `http://127.0.0.1:11434/api`; start Ollama and pull the configured model separately on the backend host. The application never downloads model binaries. Hosted OpenAI orchestration remains available with `ORCHESTRATOR_PROVIDER=openai` and its existing credential requirements.
 
 ## Container path

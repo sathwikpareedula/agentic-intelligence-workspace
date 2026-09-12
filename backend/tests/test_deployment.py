@@ -48,3 +48,23 @@ def test_compose_preserves_one_shot_migrations_and_health_dependencies() -> None
     frontend = compose.split("  frontend:", 1)[1].split("  postgres:", 1)[0]
     assert "args:" in frontend
     assert "environment:" not in frontend
+
+
+def test_compose_forwards_documented_backend_runtime_configuration() -> None:
+    compose = _text("compose.yaml")
+    backend = compose.split("  backend:", 1)[1].split("  migrate:", 1)[0]
+
+    for setting in (
+        "DATABASE_CONNECT_TIMEOUT_SECONDS",
+        "EMBEDDING_MODEL",
+        "EMBEDDING_DIMENSIONS",
+        "EMBEDDING_BATCH_SIZE",
+        "ORCHESTRATOR_CONTEXT_TOKENS",
+        "PDF_MAX_UPLOAD_BYTES",
+        "RETRIEVAL_CHUNK_SIZE",
+        "RETRIEVAL_CHUNK_OVERLAP",
+        "ALLOW_PRIVATE_REST_TARGETS",
+        "EXTERNAL_PG_PASSWORD",
+        "REST_BEARER_TOKEN",
+    ):
+        assert f"{setting}: ${{{setting}:-" in backend

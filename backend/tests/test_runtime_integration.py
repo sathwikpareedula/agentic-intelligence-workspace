@@ -10,9 +10,13 @@ from openai import APITimeoutError, OpenAIError
 
 from app.agent.models import Complete, ModelDecisionEnvelope, ToolCall
 from app.agent.providers import OllamaModelProvider, OpenAIModelProvider
+from app.agent.tools import ToolRegistry, dataset_tools
 from app.config import ConfigurationError, Settings, get_settings
 from app.dependencies import _demo_repository, _deterministic_provider, build_orchestrator_provider
 from app.main import app
+from app.repositories.executions import InMemoryExecutionRepository
+from app.services.artifacts import InMemoryArtifactRepository
+from app.services.workflows import InMemoryWorkflowRepository, WorkflowService
 
 
 ROOT = Path(__file__).parents[2]
@@ -35,6 +39,19 @@ class _Responses:
 class _Client:
     def __init__(self, responses: _Responses) -> None:
         self.responses = responses
+
+
+class _SequentialResponses:
+    def __init__(self, decisions: list[ToolCall | Complete]) -> None:
+        self._decisions = iter(decisions)
+        self.calls: list[dict] = []
+
+    def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            output_parsed=ModelDecisionEnvelope(decision=next(self._decisions)),
+            usage=SimpleNamespace(input_tokens=100, output_tokens=10, total_tokens=110),
+        )
 
 
 def _clear_runtime_caches() -> None:
@@ -356,6 +373,80 @@ def test_runtime_reports_demo_configured_and_unavailable_provider_states(monkeyp
     assert unavailable["status"] == "not_ready"
     assert unavailable["orchestrator_status"] == "unavailable"
     _clear_runtime_caches()
+
+
+def test_production_api_executes_through_openai_adapter_and_persists_usage(monkeypatch, tmp_path) -> None:
+    responses = _SequentialResponses(
+        [
+            ToolCall(tool="resource.list", arguments={}),
+            ToolCall(tool="dataset.inspect", arguments={"dataset": "sales.csv"}),
+            Complete(answer="The bound sales dataset was inspected."),
+        ]
+    )
+    captured_client_options: dict = {}
+
+    def build_client(**kwargs):
+        captured_client_options.update(kwargs)
+        return _Client(responses)
+
+    artifacts = InMemoryArtifactRepository()
+    executions = InMemoryExecutionRepository()
+    workflows = WorkflowService(InMemoryWorkflowRepository(), ToolRegistry(dataset_tools()), artifacts)
+    monkeypatch.setattr("app.agent.providers.OpenAI", build_client)
+    monkeypatch.setattr("app.api.agent.get_artifact_repository", lambda settings: artifacts)
+    monkeypatch.setattr("app.api.agent.get_execution_repository", lambda settings: executions)
+    monkeypatch.setattr("app.api.agent.get_workflow_service", lambda settings: workflows)
+    monkeypatch.setenv("APP_MODE", "production")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://configured.invalid/workspace")
+    monkeypatch.setenv("ARTIFACT_STORAGE_PATH", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "embedding-secret")
+    monkeypatch.setenv("ORCHESTRATOR_PROVIDER", "openai")
+    monkeypatch.setenv("ORCHESTRATOR_API_KEY", "orchestrator-secret")
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "hosted-test-model")
+    _clear_runtime_caches()
+
+    try:
+        response = TestClient(app).post(
+            "/agent/tasks",
+            json={
+                "goal": "Inspect the bound sales dataset.",
+                "resources": {
+                    "datasets": [
+                        {
+                            "filename": "sales.csv",
+                            "content_base64": base64.b64encode(b"region,amount\nNorth,100\n").decode("ascii"),
+                        }
+                    ]
+                },
+            },
+        )
+    finally:
+        _clear_runtime_caches()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert [step["requested_tool"] for step in body["trace"]] == ["resource.list", "dataset.inspect"]
+    assert body["provider_usage"] == {
+        "provider": "openai",
+        "model": "hosted-test-model",
+        "provider_calls": 3,
+        "latency_ms": body["provider_usage"]["latency_ms"],
+        "input_tokens": 300,
+        "output_tokens": 30,
+        "total_tokens": 330,
+        "approximate_cost_usd": None,
+        "cost_basis": None,
+    }
+    assert body["provider_usage"]["latency_ms"] >= 0
+    assert body["task_id"] in {str(task_id) for task_id in executions.executions}
+    assert "api_key" in captured_client_options
+    assert captured_client_options["timeout"] == 30.0
+    assert captured_client_options["max_retries"] == 2
+    assert len(responses.calls) == 3
+    assert all(call["text_format"] is ModelDecisionEnvelope for call in responses.calls)
+    assert all(call["store"] is False and call["parallel_tool_calls"] is False for call in responses.calls)
+    assert all("orchestrator-secret" not in call["input"] for call in responses.calls)
 
 
 def test_demo_mode_grades_workflow_through_public_http_api(monkeypatch) -> None:

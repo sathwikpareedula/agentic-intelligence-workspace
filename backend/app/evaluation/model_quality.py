@@ -329,7 +329,15 @@ def _resume_results(
     result_ids = [result.get("id") for result in results if isinstance(result, dict)]
     if len(result_ids) != len(results) or len(result_ids) != len(set(result_ids)) or not set(result_ids).issubset(allowed_ids):
         raise ValueError("Evaluation checkpoint case identities are invalid and cannot be resumed.")
-    required = {"id", "passed", "deterministic_checks", "provider_calls", "provider_error"}
+    required = {
+        "id",
+        "scenario_name",
+        "passed",
+        "deterministic_checks",
+        "provider_calls",
+        "provider_error",
+        "provider_failure_reason",
+    }
     if any(not required.issubset(result) for result in results):
         raise ValueError("Evaluation checkpoint contains incomplete case records.")
     return results
@@ -367,6 +375,7 @@ def _evaluate_case(case: ModelEvaluationCase, factory: ProviderFactory) -> dict[
     call_metrics: list[dict[str, Any]] = []
     completed: Complete | None = None
     provider_error: str | None = None
+    provider_failure_reason: str | None = None
     next_step = 0
     max_turns = max(2, min(25, len(case.steps) + 5))
 
@@ -377,10 +386,12 @@ def _evaluate_case(case: ModelEvaluationCase, factory: ProviderFactory) -> dict[
         except ModelProviderError as exc:
             _capture_case_metrics(provider, previous_metrics, call_metrics)
             provider_error = exc.code
+            provider_failure_reason = str(exc)
             break
         except Exception:
             _capture_case_metrics(provider, previous_metrics, call_metrics)
             provider_error = "provider_failure"
+            provider_failure_reason = "Orchestrator provider failed unexpectedly."
             break
         _capture_case_metrics(provider, previous_metrics, call_metrics)
         if isinstance(decision, Complete):
@@ -422,6 +433,7 @@ def _evaluate_case(case: ModelEvaluationCase, factory: ProviderFactory) -> dict[
     case_output_tokens = _sum_available(call["output_tokens"] for call in call_metrics)
     return {
         "id": case.id,
+        "scenario_name": case.capability,
         "capability": case.capability,
         "provider": factory.provider_name,
         "model": factory.model_name,
@@ -448,6 +460,7 @@ def _evaluate_case(case: ModelEvaluationCase, factory: ProviderFactory) -> dict[
         "hallucinated_tool_arguments": sum(bool(call["hallucinated_resources"]) for call in calls),
         "unnecessary_tool_calls": max(0, len(calls) - len(case.expectation.tool_sequence)),
         "provider_error": provider_error,
+        "provider_failure_reason": provider_failure_reason,
         "latency_ms": sum(call["latency_ms"] for call in call_metrics) if call_metrics else None,
         "input_tokens": case_input_tokens,
         "output_tokens": case_output_tokens,
