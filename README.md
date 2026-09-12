@@ -2,9 +2,48 @@
 
 **Turn recurring data work into verified, reusable workflows.**
 
+
 Agentic Intelligence Workspace is an agentic data-operations platform that combines AI planning with deterministic data tools to analyze structured data and business documents, generate validated deliverables, preserve evidence and provenance, and safely rerun successful workflows on new data.
 
 Instead of asking an AI assistant to repeat the same analysis every month, the workspace turns a successful task into a versioned workflow that can be rerun, inspected, compared, and stopped when new inputs are no longer safe or compatible.
+
+## What It Demonstrates
+
+- Agentic planning with typed tool contracts
+- Deterministic analytics and data transformations
+- Evidence-backed document retrieval
+- Verification and provenance
+- Reusable versioned workflows
+- Schema-drift detection and run comparison
+
+## Tech Stack
+
+**Backend:** Python · FastAPI · Pydantic · pandas · PostgreSQL · pgvector · Alembic
+
+**Frontend:** Next.js · TypeScript
+
+**AI / Orchestration:** OpenAI-compatible providers · Ollama · typed tool calling · bounded agent loops
+
+**Data / Retrieval:** CSV · XLSX · JSON · Parquet · PDF · REST · read-only PostgreSQL
+
+## Architecture
+
+```text
+User Goal
+   ↓
+Orchestrator
+   ↓
+Typed Tools
+   ↓
+Data / Retrieval / External Sources
+   ↓
+Deterministic Execution
+   ↓
+Verification
+   ↓
+Artifacts + Provenance
+   ↓
+Saved Workflow + Run History
 
 ---
 
@@ -77,6 +116,19 @@ sample_data/september_transactions.csv
 After the initial report, select **Create First Run** to record the August baseline. Replace the transactions file, select **Run Again with Current Inputs** to execute the same saved recipe for September, then compare the two completed runs in **What Changed?**. The comparison uses facts persisted by deterministic tools; the browser does not recalculate them.
 
 Finally, replace the transactions file with `sample_data/incompatible_transactions.csv`. The missing required `discount` column must create an inspectable blocked run rather than a report.
+
+## V1 Validation
+
+V1 was validated across the complete browser demo surface and supporting backend integrations.
+
+- All five visible workflows were browser-tested
+- August → September recurring-sales rerun verified
+- Persisted comparison verified: `2350 → 3030`, `+680`, `+28.94%`
+- Incompatible transaction schema correctly creates a blocked run with no generated facts or artifacts
+- PostgreSQL 17.4 + pgvector 0.8.6 integration verified locally
+- Frontend typecheck and CI checks passing
+- Deterministic evaluation suites passing
+- Hosted-provider quality is not claimed until a real credential-backed run is completed
 
 ## Quick start
 
