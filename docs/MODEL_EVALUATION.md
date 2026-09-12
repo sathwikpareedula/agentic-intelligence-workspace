@@ -91,6 +91,38 @@ Provider support, runtime compatibility, hardware feasibility, and model quality
 
 These results establish native provider execution and resumable evaluation, but they do not identify a recommended local default. Llama and Qwen were operationally unsuitable under the fixed CPU-only acceptance bounds, while Gemma could not initialize schema-constrained generation in the installed runtime. Qwen 3.5 4B remains the preferred *next candidate to evaluate* on suitable GPU-backed hardware because it fits the smaller artifact class; that is a test-priority decision, not a quality result or product default. A GPU-backed compatibility preflight and, only if it succeeds, the unchanged ten-case benchmark remain pending. Generated reports remain local and ignored: the reviewed conclusions above contain no prompts, response bodies, machine-specific paths, or secrets.
 
+## Running the Ollama evaluation on a GPU machine
+
+Install a current NVIDIA driver, confirm `nvidia-smi` works, and install Ollama plus this repository's backend dependencies. Choose an exact Ollama model tag based on the machine's available VRAM; the project does not select or download a default model.
+
+In one terminal:
+
+```powershell
+$modelTag = "<exact-ollama-model-tag>"
+ollama pull $modelTag
+ollama serve
+```
+
+In a second terminal, from `backend`:
+
+```powershell
+nvidia-smi --query-gpu=name,driver_version,memory.total,memory.used --format=csv
+ollama --version
+ollama ps
+
+$modelTag = "<same-exact-ollama-model-tag>"
+.\.venv\Scripts\python.exe -m app.evaluation.model_quality ..\evals\model_cases.json `
+  --mode live --provider ollama --model $modelTag `
+  --timeout-seconds 60 --max-retries 1 `
+  --max-output-tokens 512 --context-tokens 8192 `
+  --output ..\var\ollama-eval\gpu-candidate.json `
+  --quiet --progress
+```
+
+Record the Git commit, exact model tag, Ollama version, `nvidia-smi` output, and `ollama ps` processor/context information with the generated report. The JSON report records scenario-level pass/fail results, structured-output validity, tool and grounding checks, latency, available token counts, provider/model identity, failure reasons, and a configuration fingerprint. Add `--resume` to the identical command after an interruption; it refuses a checkpoint whose model, settings, suite version, case count, or case-file hash differs.
+
+Comparisons are valid only when the case file, suite version, model tag, temperature, output/context bounds, timeout, and retry count match. Keep generated reports under the ignored `var/ollama-eval` directory or archive them outside the repository; do not commit model weights or caches. A successful GPU run is evidence for that model, tag, hardware, runtime, and configuration only. It must not be presented as the product default or a winner without a reviewed comparison against the same fixed suite.
+
 Approximate cost is omitted by default because prices change and may differ by endpoint. Supply both current operator-verified rates to calculate it:
 
 ```powershell
