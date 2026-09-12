@@ -17,6 +17,7 @@ build/
 # Node
 node_modules/
 .next/
+/frontend/next-env.d.ts
 .nuxt/
 .svelte-kit/
 coverage/
@@ -50,6 +51,7 @@ Desktop.ini
 /backend/var/
 /var/ollama-eval/
 /var/model-eval/
+/var/ui-demo-qa/
 .pytest-tmp/
 
 *.tsbuildinfo

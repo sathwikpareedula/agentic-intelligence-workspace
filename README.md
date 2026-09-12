@@ -165,7 +165,7 @@ From the repository root:
 
 ```powershell
 cd backend
-py -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[test]"
 $env:APP_MODE = "demo"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
@@ -224,10 +224,10 @@ Apply Alembic migrations before startup.
 
 See:
 
-- `docs/DEPLOYMENT.md` for the production configuration contract
-- `docs/MODEL_EVALUATION.md` for model evaluation and credential-gated live execution
-- `docs/ARCHITECTURE.md` for system design
-- `docs/SECURITY.md` for implemented security boundaries and remaining limitations
+- [Deployment guide](docs/DEPLOYMENT.md) for the production configuration contract
+- [Model evaluation](docs/MODEL_EVALUATION.md) for credential-gated live and local execution
+- [Architecture](docs/ARCHITECTURE.md) for the system design
+- [Security](docs/SECURITY.md) for implemented boundaries and remaining limitations
 
 The provider path is covered with integration tests, but no hosted-model quality result is currently claimed.
 
@@ -277,7 +277,7 @@ V1 is designed for **single-user, local, or controlled deployment**.
 
 It is not intended for sensitive multi-user production use because authentication, authorization, tenancy, retention policies, and additional deployment-hardening controls remain out of scope.
 
-See `docs/SECURITY.md` for the full threat model, implemented controls, residual risks, and deployment limitations.
+See [Security](docs/SECURITY.md) for the full threat model, implemented controls, residual risks, and deployment limitations.
 
 ---
 
