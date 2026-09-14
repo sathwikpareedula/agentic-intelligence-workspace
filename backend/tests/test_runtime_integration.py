@@ -1,12 +1,14 @@
 """Runtime selection, provider adapter, and public grades workflow integration tests."""
 
 import base64
+import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import httpx
-from openai import APITimeoutError, OpenAIError
+from openai import APITimeoutError, BadRequestError, OpenAI, OpenAIError
 
 from app.agent.models import Complete, ModelDecisionEnvelope, ToolCall
 from app.agent.providers import OllamaModelProvider, OpenAIModelProvider
@@ -33,7 +35,10 @@ class _Responses:
         self.kwargs = kwargs
         if self.error:
             raise self.error
-        return SimpleNamespace(output_parsed=self.result, usage=self.usage)
+        result = self.result
+        if isinstance(result, ModelDecisionEnvelope):
+            result = _wire_decision(kwargs["text_format"], result.decision)
+        return SimpleNamespace(output_parsed=result, usage=self.usage)
 
 
 class _Client:
@@ -49,9 +54,72 @@ class _SequentialResponses:
     def parse(self, **kwargs):
         self.calls.append(kwargs)
         return SimpleNamespace(
-            output_parsed=ModelDecisionEnvelope(decision=next(self._decisions)),
+            output_parsed=_wire_decision(kwargs["text_format"], next(self._decisions)),
             usage=SimpleNamespace(input_tokens=100, output_tokens=10, total_tokens=110),
         )
+
+
+def _wire_decision(response_model, decision: ToolCall | Complete):
+    if isinstance(decision, ToolCall):
+        payload = {
+            "type": "tool_call",
+            "tool": decision.tool,
+            "arguments_json": json.dumps(decision.arguments, separators=(",", ":")),
+        }
+    else:
+        payload = decision.model_dump(mode="json")
+    return response_model.model_validate({"decision": payload})
+
+
+_UNSUPPORTED_OPENAI_SCHEMA_KEYWORDS = {
+    "oneOf",
+    "minLength",
+    "maxLength",
+    "allOf",
+    "not",
+    "dependentRequired",
+    "dependentSchemas",
+    "if",
+    "then",
+    "else",
+}
+
+
+def _strict_schema_violations(value, path: str = "$") -> list[str]:
+    violations: list[str] = []
+    if isinstance(value, dict):
+        for keyword in _UNSUPPORTED_OPENAI_SCHEMA_KEYWORDS.intersection(value):
+            violations.append(f"{path}: unsupported {keyword}")
+        if value.get("type") == "object":
+            properties = value.get("properties")
+            if not isinstance(properties, dict):
+                violations.append(f"{path}: missing properties")
+            else:
+                required = value.get("required")
+                if not isinstance(required, list) or set(required) != set(properties):
+                    violations.append(f"{path}: not all properties required")
+            if value.get("additionalProperties") is not False:
+                violations.append(f"{path}: object is not closed")
+        for key, nested in value.items():
+            violations.extend(_strict_schema_violations(nested, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            violations.extend(_strict_schema_violations(nested, f"{path}[{index}]"))
+    return violations
+
+
+def _tool_name_constants(value) -> set[str]:
+    names: set[str] = set()
+    if isinstance(value, dict):
+        tool_schema = value.get("properties", {}).get("tool")
+        if isinstance(tool_schema, dict) and isinstance(tool_schema.get("const"), str):
+            names.add(tool_schema["const"])
+        for nested in value.values():
+            names.update(_tool_name_constants(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            names.update(_tool_name_constants(nested))
+    return names
 
 
 def _clear_runtime_caches() -> None:
@@ -89,10 +157,42 @@ def test_orchestrator_settings_support_dedicated_key_and_credential_free_base_ur
     try:
         Settings.from_env()
     except ConfigurationError as exc:
-        assert "without embedded credentials" in str(exc)
+        assert "cannot contain credentials" in str(exc)
         assert "password" not in str(exc)
     else:
         raise AssertionError("Base URLs with embedded credentials must fail configuration validation.")
+
+
+def test_orchestrator_base_url_requires_https_except_literal_loopback(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "demo")
+
+    for accepted in (
+        "https://api.openai.com/v1",
+        "https://compatible.example/v1",
+        "http://localhost:8080/v1",
+        "http://127.0.0.1:8080/v1",
+        "http://[::1]:8080/v1",
+    ):
+        monkeypatch.setenv("ORCHESTRATOR_BASE_URL", accepted)
+        assert Settings.from_env().orchestrator_base_url == accepted
+
+    for rejected in (
+        "http://example.com/v1",
+        "http://8.8.8.8/v1",
+        "https://user:password@compatible.example/v1",
+        "https://compatible.example/v1?token=fake",
+        "https://compatible.example/v1#fragment",
+        "https://compatible.example:not-a-port/v1",
+        "https://compatible.example:/v1",
+        "https://[::1",
+    ):
+        monkeypatch.setenv("ORCHESTRATOR_BASE_URL", rejected)
+        try:
+            Settings.from_env()
+        except ConfigurationError as exc:
+            assert rejected not in str(exc)
+        else:
+            raise AssertionError(f"Unsafe provider URL must fail configuration validation: {rejected}")
 
 
 def test_orchestrator_settings_bound_provider_resource_controls(monkeypatch) -> None:
@@ -203,6 +303,118 @@ def test_openai_provider_validates_structured_decisions_without_logging_credenti
     assert "secret-not-sent-in-payload" not in responses.kwargs["input"]
 
 
+def test_openai_provider_builds_supported_strict_schema_from_allowed_tools() -> None:
+    responses = _Responses(ModelDecisionEnvelope(decision=Complete(answer="Ready")))
+    provider = OpenAIModelProvider(
+        "test-key",
+        "test-model",
+        [
+            {"name": "resource.list", "description": "List resources.", "input_schema": {"type": "object"}},
+            {
+                "name": "analytics.execute",
+                "description": "Run deterministic analytics.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"dataset": {"type": "string"}, "plan": {"type": "object"}},
+                },
+            },
+        ],
+        3.0,
+        0,
+        client=_Client(responses),
+    )
+
+    assert provider.decide("Finish", []).answer == "Ready"
+
+    response_model = responses.kwargs["text_format"]
+    schema = response_model.model_json_schema()
+    assert response_model is not ModelDecisionEnvelope
+    assert response_model.__name__ == "ModelDecisionEnvelope"
+    assert schema["type"] == "object"
+    assert "anyOf" not in schema
+    assert _strict_schema_violations(schema) == []
+    assert "anyOf" in schema["properties"]["decision"]
+    variants = schema["properties"]["decision"]["anyOf"]
+    assert len(variants) == 3
+    assert "arguments_json" in json.dumps(schema)
+    assert '"arguments"' not in json.dumps(schema)
+
+
+def test_openai_provider_serializes_strict_schema_through_real_sdk_offline() -> None:
+    captured: dict = {}
+    allowed_tools = {"resource.list", "dataset.inspect"}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "resp_offline_test",
+                "object": "response",
+                "created_at": 0,
+                "status": "completed",
+                "model": "test-model",
+                "output": [
+                    {
+                        "id": "msg_offline_test",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "annotations": [],
+                                "text": '{"decision":{"type":"complete","answer":"Ready","claims":[]}}',
+                            }
+                        ],
+                    }
+                ],
+                "parallel_tool_calls": False,
+                "tools": [],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                    "input_tokens_details": {"cached_tokens": 0},
+                    "output_tokens_details": {"reasoning_tokens": 0},
+                },
+            },
+        )
+
+    sdk_client = OpenAI(
+        api_key="offline-test-key",
+        base_url="https://offline.invalid/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    try:
+        provider = OpenAIModelProvider(
+            "offline-test-key",
+            "test-model",
+            [
+                {"name": "resource.list", "input_schema": {"type": "object"}},
+                {"name": "dataset.inspect", "input_schema": {"type": "object"}},
+            ],
+            3.0,
+            0,
+            client=sdk_client,
+        )
+        assert provider.decide("Finish", []).answer == "Ready"
+    finally:
+        sdk_client.close()
+
+    response_format = captured["text"]["format"]
+    serialized_schema = json.dumps(response_format["schema"], separators=(",", ":"))
+    assert response_format["type"] == "json_schema"
+    assert response_format["strict"] is True
+    assert response_format["name"] == "ModelDecisionEnvelope"
+    assert response_format["schema"]["type"] == "object"
+    assert "anyOf" not in response_format["schema"]
+    assert _strict_schema_violations(response_format["schema"]) == []
+    assert _tool_name_constants(response_format["schema"]) == allowed_tools
+    assert "workflow.delete" not in serialized_schema
+
+
 def test_openai_provider_configures_base_url_timeout_and_sdk_retries(monkeypatch) -> None:
     captured = {}
 
@@ -272,9 +484,94 @@ def test_openai_provider_maps_provider_errors() -> None:
         raise AssertionError("Provider errors must be mapped to a stable public-safe error.")
 
 
+def test_openai_provider_logs_controlled_metadata_without_upstream_text_or_secrets(caplog) -> None:
+    sensitive_values = (
+        "sk-test-secret-long-value",
+        "@",
+        "password=fake-password",
+        "token=fake-token",
+        "private validation goal",
+        "provider-freeform-type",
+        "provider-freeform-code",
+        "provider-freeform-body",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.agent.providers"):
+        for api_key in sensitive_values[:2]:
+            request = httpx.Request("POST", "https://api.openai.com/v1/responses?token=fake-token")
+            response = httpx.Response(400, request=request, headers={"x-request-id": "req_schema_123"})
+            upstream = BadRequestError(
+                " ".join(sensitive_values),
+                response=response,
+                body={
+                    "type": sensitive_values[5],
+                    "code": sensitive_values[6],
+                    "message": sensitive_values[7],
+                },
+            )
+            provider = OpenAIModelProvider(
+                api_key,
+                "test-model",
+                [],
+                3.0,
+                0,
+                client=_Client(_Responses(error=upstream)),
+            )
+            try:
+                provider.decide(sensitive_values[4], [])
+            except RuntimeError as exc:
+                assert exc.code == "provider_failure"
+                assert str(exc) == "Orchestrator provider request failed."
+            else:
+                raise AssertionError("The provider error must still fail closed.")
+
+    logged = caplog.text
+    assert logged.count("openai_provider_error") == 2
+    assert '"exception":"BadRequestError"' in logged
+    assert '"status":400' in logged
+    assert '"request_id":"req_schema_123"' in logged
+    assert '"error_code":"provider_failure"' in logged
+    for sensitive in sensitive_values:
+        assert sensitive not in logged
+
+
+def test_openai_provider_drops_unbounded_provider_request_id(caplog) -> None:
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(400, request=request, headers={"x-request-id": "arbitrary free-form identifier"})
+    upstream = BadRequestError("provider text", response=response, body={"message": "provider body"})
+    provider = OpenAIModelProvider(
+        "x",
+        "test-model",
+        [],
+        3.0,
+        0,
+        client=_Client(_Responses(error=upstream)),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.agent.providers"):
+        try:
+            provider.decide("private validation goal", [])
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("The provider error must still fail closed.")
+
+    assert '"request_id":null' in caplog.text
+    assert "arbitrary free-form identifier" not in caplog.text
+    assert "provider text" not in caplog.text
+    assert "provider body" not in caplog.text
+
+
 def test_openai_provider_rejects_unsafe_direct_configuration() -> None:
     invalid = (
         {"base_url": "https://user:secret@provider.invalid/v1"},
+        {"base_url": "https://provider.invalid/v1?token=fake"},
+        {"base_url": "https://provider.invalid/v1#fragment"},
+        {"base_url": "https://provider.invalid:not-a-port/v1"},
+        {"base_url": "https://provider.invalid:/v1"},
+        {"base_url": "https://[::1"},
+        {"base_url": "http://example.com/v1"},
+        {"base_url": "http://8.8.8.8/v1"},
         {"timeout_seconds": 121},
         {"max_retries": 6},
         {"max_output_tokens": 20_001},
@@ -298,6 +595,26 @@ def test_openai_provider_rejects_unsafe_direct_configuration() -> None:
             raise AssertionError("Unsafe direct provider configuration must fail closed.")
 
 
+def test_openai_provider_accepts_https_and_literal_loopback_http() -> None:
+    for base_url in (
+        "https://api.openai.com/v1",
+        "https://compatible.example/v1",
+        "http://localhost:8080/v1",
+        "http://127.0.0.1:8080/v1",
+        "http://[::1]:8080/v1",
+    ):
+        provider = OpenAIModelProvider(
+            "test-key",
+            "test-model",
+            [],
+            3.0,
+            0,
+            base_url=base_url,
+            client=_Client(_Responses(ModelDecisionEnvelope(decision=Complete(answer="Ready")))),
+        )
+        assert provider.decide("Finish", []).answer == "Ready"
+
+
 def test_openai_provider_rejects_malformed_structured_output() -> None:
     provider = OpenAIModelProvider(
         "test-key",
@@ -315,6 +632,100 @@ def test_openai_provider_rejects_malformed_structured_output() -> None:
         assert "malformed structured output" in str(exc)
     else:
         raise AssertionError("Malformed provider output must fail closed.")
+
+
+def test_openai_provider_rejects_malformed_encoded_tool_arguments() -> None:
+    for arguments_json in (
+        "",
+        "   ",
+        "not-json",
+        "[]",
+        '{"dataset":"first.csv","dataset":"second.csv"}',
+        '{"threshold":NaN}',
+        "{}" + (" " * 100_000),
+    ):
+        provider = OpenAIModelProvider(
+            "test-key",
+            "test-model",
+            [{"name": "dataset.inspect", "input_schema": {"type": "object"}}],
+            3.0,
+            0,
+            client=_Client(
+                _Responses(
+                    result={
+                        "decision": {
+                            "type": "tool_call",
+                            "tool": "dataset.inspect",
+                            "arguments_json": arguments_json,
+                        }
+                    }
+                )
+            ),
+        )
+
+        try:
+            provider.decide("Inspect", [])
+        except RuntimeError as exc:
+            assert exc.code == "malformed_response"
+            assert str(exc) == "Orchestrator provider returned malformed structured output."
+        else:
+            raise AssertionError("Malformed encoded arguments must fail closed.")
+
+
+def test_openai_provider_applies_canonical_validation_after_wire_decode() -> None:
+    provider = OpenAIModelProvider(
+        "test-key",
+        "test-model",
+        [],
+        3.0,
+        0,
+        client=_Client(
+            _Responses(
+                result={
+                    "decision": {
+                        "type": "complete",
+                        "answer": "",
+                        "claims": [],
+                    }
+                }
+            )
+        ),
+    )
+
+    try:
+        provider.decide("Finish", [])
+    except RuntimeError as exc:
+        assert exc.code == "malformed_response"
+    else:
+        raise AssertionError("Canonical response validation must remain authoritative after wire parsing.")
+
+
+def test_openai_provider_rejects_tool_outside_supplied_registry() -> None:
+    provider = OpenAIModelProvider(
+        "test-key",
+        "test-model",
+        [{"name": "dataset.inspect", "input_schema": {"type": "object"}}],
+        3.0,
+        0,
+        client=_Client(
+            _Responses(
+                result={
+                    "decision": {
+                        "type": "tool_call",
+                        "tool": "sql.execute",
+                        "arguments_json": "{}",
+                    }
+                }
+            )
+        ),
+    )
+
+    try:
+        provider.decide("Inspect", [])
+    except RuntimeError as exc:
+        assert exc.code == "malformed_response"
+    else:
+        raise AssertionError("A tool outside the supplied registry must fail closed.")
 
 
 def test_openai_provider_maps_timeout_without_exposing_request_details() -> None:
@@ -380,7 +791,19 @@ def test_production_api_executes_through_openai_adapter_and_persists_usage(monke
         [
             ToolCall(tool="resource.list", arguments={}),
             ToolCall(tool="dataset.inspect", arguments={"dataset": "sales.csv"}),
-            Complete(answer="The bound sales dataset was inspected."),
+            ToolCall(
+                tool="analytics.execute",
+                arguments={
+                    "dataset": "sales.csv",
+                    "plan": {
+                        "analysis": "metrics",
+                        "group_by": ["region"],
+                        "metrics": [{"name": "sum", "column": "amount", "alias": "total_amount"}],
+                        "expected_columns": ["region", "amount"],
+                    },
+                },
+            ),
+            Complete(answer="The bound sales dataset was inspected and analyzed deterministically."),
         ]
     )
     captured_client_options: dict = {}
@@ -409,7 +832,7 @@ def test_production_api_executes_through_openai_adapter_and_persists_usage(monke
         response = TestClient(app).post(
             "/agent/tasks",
             json={
-                "goal": "Inspect the bound sales dataset.",
+                "goal": "Inspect the bound sales dataset and sum amount by region.",
                 "resources": {
                     "datasets": [
                         {
@@ -426,15 +849,20 @@ def test_production_api_executes_through_openai_adapter_and_persists_usage(monke
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "completed"
-    assert [step["requested_tool"] for step in body["trace"]] == ["resource.list", "dataset.inspect"]
+    assert [step["requested_tool"] for step in body["trace"]] == [
+        "resource.list",
+        "dataset.inspect",
+        "analytics.execute",
+    ]
+    assert body["trace"][2]["success"] is True
     assert body["provider_usage"] == {
         "provider": "openai",
         "model": "hosted-test-model",
-        "provider_calls": 3,
+        "provider_calls": 4,
         "latency_ms": body["provider_usage"]["latency_ms"],
-        "input_tokens": 300,
-        "output_tokens": 30,
-        "total_tokens": 330,
+        "input_tokens": 400,
+        "output_tokens": 40,
+        "total_tokens": 440,
         "approximate_cost_usd": None,
         "cost_basis": None,
     }
@@ -443,8 +871,9 @@ def test_production_api_executes_through_openai_adapter_and_persists_usage(monke
     assert "api_key" in captured_client_options
     assert captured_client_options["timeout"] == 30.0
     assert captured_client_options["max_retries"] == 2
-    assert len(responses.calls) == 3
-    assert all(call["text_format"] is ModelDecisionEnvelope for call in responses.calls)
+    assert len(responses.calls) == 4
+    assert all(call["text_format"].__name__ == "ModelDecisionEnvelope" for call in responses.calls)
+    assert all(call["text_format"] is not ModelDecisionEnvelope for call in responses.calls)
     assert all(call["store"] is False and call["parallel_tool_calls"] is False for call in responses.calls)
     assert all("orchestrator-secret" not in call["input"] for call in responses.calls)
 

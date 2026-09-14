@@ -3,17 +3,43 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 import json
+import logging
+import re
 import socket
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, Union
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, OpenAIError
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from app.agent.models import AnswerClaim, Complete, ModelDecision, ModelDecisionEnvelope, ToolCall, ToolObservation
+
+
+logger = logging.getLogger(__name__)
+
+
+class _OpenAIWireModel(BaseModel):
+    """Strict provider-wire model; canonical agent contracts remain provider-neutral."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class _OpenAIAnswerClaim(_OpenAIWireModel):
+    text: str
+    kind: Literal["numeric", "document"]
+    value: float | None
+    source_ids: list[str]
+    evidence_keys: list[str]
+    unit: str | None
+
+
+class _OpenAIComplete(_OpenAIWireModel):
+    type: Literal["complete"]
+    answer: str
+    claims: list[_OpenAIAnswerClaim]
 
 
 class ModelProvider(Protocol):
@@ -67,12 +93,153 @@ After a recoverable tool failure, inspect its tool name, arguments, and error, t
 Do not repeat an unchanged failed call. If evidence is missing or conflicting, state that plainly.
 Complete only when the requested work is done or the available evidence is insufficient. Keep the answer concise."""
 
+_OPENAI_ORCHESTRATOR_INSTRUCTIONS = _ORCHESTRATOR_INSTRUCTIONS + """
+For a tool-call decision, encode exactly one JSON object in arguments_json. Its keys and values must match
+the selected tool's supplied input_schema; do not add arguments that schema does not allow."""
+
+_MAX_OPENAI_ARGUMENTS_JSON_CHARACTERS = 100_000
+_PROVIDER_REQUEST_ID_PATTERN = re.compile(r"^req_[A-Za-z0-9_-]{1,96}$")
+_PROVIDER_EXCEPTION_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,99}$")
+
+
+def _openai_decision_envelope(tool_specifications: list[dict[str, Any]]) -> type[BaseModel]:
+    """Build an OpenAI-compatible strict envelope from the task's allowed tool names.
+
+    Tool argument contracts may legitimately contain maps whose keys are only known at
+    runtime (for example, rename mappings). OpenAI strict Structured Outputs does not
+    allow such objects. The wire format therefore carries a bounded JSON string, then
+    restores the normal mapping for validation by the registered Pydantic input model.
+    """
+
+    if len(tool_specifications) > 100:
+        raise ValueError("OpenAI tool specifications cannot exceed 100 tools.")
+    variants: list[type[BaseModel]] = []
+    seen: set[str] = set()
+    for index, specification in enumerate(tool_specifications):
+        name = specification.get("name") if isinstance(specification, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Every OpenAI tool specification requires a non-empty name.")
+        name = name.strip()
+        if len(name) > 100:
+            raise ValueError("OpenAI tool specification names cannot exceed 100 characters.")
+        input_schema = specification.get("input_schema")
+        if not isinstance(input_schema, dict) or input_schema.get("type") != "object":
+            raise ValueError(f"OpenAI tool specification '{name}' requires an object input schema.")
+        if name in seen:
+            raise ValueError(f"Duplicate OpenAI tool specification '{name}'.")
+        seen.add(name)
+        safe_name = re.sub(r"[^A-Za-z0-9_]", "_", name)[:80]
+        variants.append(
+            create_model(
+                f"OpenAIToolCall_{index}_{safe_name}",
+                __base__=_OpenAIWireModel,
+                __module__=__name__,
+                type=(Literal["tool_call"], ...),
+                tool=(Literal[name], ...),
+                arguments_json=(
+                    str,
+                    Field(
+                        description=f"JSON object matching the registered input schema for {name}.",
+                    ),
+                ),
+            )
+        )
+    variants.append(_OpenAIComplete)
+    decision_type = variants[0] if len(variants) == 1 else Union[tuple(variants)]
+    return create_model(
+        "ModelDecisionEnvelope",
+        __base__=_OpenAIWireModel,
+        __module__=__name__,
+        decision=(decision_type, ...),
+    )
+
+
+def _decode_openai_decision(response_model: type[BaseModel], value: Any) -> ModelDecision:
+    parsed = response_model.model_validate(value)
+    decision = parsed.decision
+    payload = decision.model_dump(mode="json")
+    if payload.get("type") == "complete":
+        return Complete.model_validate(payload)
+    arguments_json = payload["arguments_json"]
+    if not arguments_json.strip() or len(arguments_json) > _MAX_OPENAI_ARGUMENTS_JSON_CHARACTERS:
+        raise ValueError("Tool arguments JSON is empty or exceeds the provider response bound.")
+    arguments = json.loads(
+        arguments_json,
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_constant=_reject_non_finite_json,
+    )
+    if not isinstance(arguments, dict):
+        raise TypeError("Tool arguments must decode to a JSON object.")
+    return ToolCall(tool=payload["tool"], arguments=arguments)
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key '{key}'.")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json(value: str) -> None:
+    raise ValueError(f"Non-finite JSON value '{value}' is not allowed.")
+
+
+def _log_openai_error(
+    exc: Exception,
+    *,
+    error_code: Literal["provider_timeout", "provider_unavailable", "provider_failure"],
+) -> None:
+    exception_name = type(exc).__name__
+    if not _PROVIDER_EXCEPTION_NAME_PATTERN.fullmatch(exception_name):
+        exception_name = "ProviderError"
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+        status = None
+    request_id = getattr(exc, "request_id", None)
+    if not isinstance(request_id, str) or not _PROVIDER_REQUEST_ID_PATTERN.fullmatch(request_id):
+        request_id = None
+    metadata = {
+        "provider": "openai",
+        "exception": exception_name,
+        "error_code": error_code,
+        "status": status,
+        "request_id": request_id,
+    }
+    logger.warning("openai_provider_error %s", json.dumps(metadata, sort_keys=True, separators=(",", ":")))
+
+
+def _validate_openai_base_url(value: str) -> None:
+    try:
+        parsed = urlparse(value)
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("Provider base URL is malformed or contains an invalid port.") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or "?" in value
+        or "#" in value
+        or any(character.isspace() for character in value)
+        or parsed.netloc.endswith(":")
+        or (parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"})
+    ):
+        raise ValueError(
+            "Provider base URL must use HTTPS, except for literal loopback HTTP, and cannot contain credentials, query, or fragment."
+        )
+
 
 class OpenAIModelProvider:
     """Responses API adapter that returns one validated orchestration decision per turn."""
 
     provider_name = "openai"
-    _instructions = _ORCHESTRATOR_INSTRUCTIONS
+    _instructions = _OPENAI_ORCHESTRATOR_INSTRUCTIONS
 
     def __init__(
         self,
@@ -97,18 +264,7 @@ class OpenAIModelProvider:
         if not 0 < max_output_tokens <= 20_000:
             raise ValueError("Provider output tokens must be between 1 and 20,000.")
         if base_url:
-            parsed = urlparse(base_url)
-            if (
-                parsed.scheme not in {"http", "https"}
-                or not parsed.netloc
-                or parsed.username
-                or parsed.password
-                or parsed.query
-                or parsed.fragment
-            ):
-                raise ValueError(
-                    "Provider base URL must be HTTP(S) without embedded credentials, query, or fragment."
-                )
+            _validate_openai_base_url(base_url)
         client_options: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout_seconds,
@@ -118,7 +274,8 @@ class OpenAIModelProvider:
             client_options["base_url"] = base_url
         self._client = client or OpenAI(**client_options)
         self._model = model.strip()
-        self._tool_specifications = tool_specifications
+        self._tool_specifications = list(tool_specifications)
+        self._response_model = _openai_decision_envelope(self._tool_specifications)
         self._timeout_seconds = timeout_seconds
         self._max_output_tokens = max_output_tokens
         self._last_call_metrics: ProviderCallMetrics | None = None
@@ -143,7 +300,7 @@ class OpenAIModelProvider:
                 model=self._model,
                 instructions=self._instructions,
                 input=json.dumps(input_payload, separators=(",", ":")),
-                text_format=ModelDecisionEnvelope,
+                text_format=self._response_model,
                 store=False,
                 parallel_tool_calls=False,
                 max_output_tokens=self._max_output_tokens,
@@ -151,22 +308,24 @@ class OpenAIModelProvider:
             )
         except (APITimeoutError, TimeoutError) as exc:
             self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
+            _log_openai_error(exc, error_code="provider_timeout")
             raise ModelProviderError("provider_timeout", "Orchestrator provider timed out.") from exc
         except APIConnectionError as exc:
             self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
+            _log_openai_error(exc, error_code="provider_unavailable")
             raise ModelProviderError("provider_unavailable", "Orchestrator provider is unavailable.") from exc
         except OpenAIError as exc:
             self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
+            _log_openai_error(exc, error_code="provider_failure")
             raise ModelProviderError("provider_failure", "Orchestrator provider request failed.") from exc
         except (ValidationError, ValueError, TypeError, json.JSONDecodeError) as exc:
             self._last_call_metrics = ProviderCallMetrics(latency_ms=(perf_counter() - started) * 1000)
             raise ModelProviderError("malformed_response", "Orchestrator provider returned malformed structured output.") from exc
         self._last_call_metrics = _response_metrics(response, (perf_counter() - started) * 1000)
         try:
-            parsed = ModelDecisionEnvelope.model_validate(response.output_parsed)
-        except (AttributeError, ValidationError, TypeError) as exc:
+            return _decode_openai_decision(self._response_model, response.output_parsed)
+        except (AttributeError, ValidationError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise ModelProviderError("malformed_response", "Orchestrator provider returned malformed structured output.") from exc
-        return parsed.decision
 
 
 class OllamaModelProvider:
