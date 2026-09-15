@@ -87,6 +87,8 @@ class Settings:
             settings.orchestrator_output_cost_per_million is None
         ):
             raise ConfigurationError("Configure both orchestrator cost rates, or neither.")
+        if settings.orchestrator_provider == "openai" and settings.orchestrator_base_url:
+            _validate_openai_base_url(settings.orchestrator_base_url)
         if settings.orchestrator_provider == "ollama":
             _validate_ollama_base_url(settings.orchestrator_base_url or "http://127.0.0.1:11434/api")
             if settings.orchestrator_input_cost_per_million is not None:
@@ -151,16 +153,27 @@ def _optional_http_url(name: str) -> str | None:
     if raw is None or not raw.strip():
         return None
     value = raw.strip().rstrip("/")
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+        parsed.port
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} is malformed or contains an invalid port.") from exc
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.netloc
+        or not parsed.hostname
         or parsed.username
         or parsed.password
         or parsed.query
         or parsed.fragment
+        or "?" in value
+        or "#" in value
+        or any(character.isspace() for character in value)
+        or parsed.netloc.endswith(":")
     ):
-        raise ConfigurationError(f"{name} must be an HTTP(S) base URL without embedded credentials, query, or fragment.")
+        raise ConfigurationError(
+            f"{name} must be an HTTP(S) base URL and cannot contain credentials, query, or fragment."
+        )
     return value
 
 
@@ -169,6 +182,16 @@ def _optional_env(name: str) -> str | None:
     if value is None or not value.strip():
         return None
     return value.strip()
+
+
+def _validate_openai_base_url(value: str) -> None:
+    """Require TLS for remote OpenAI-compatible endpoints."""
+
+    parsed = urlparse(value)
+    if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise ConfigurationError(
+            "ORCHESTRATOR_BASE_URL must use HTTPS, except for literal loopback HTTP."
+        )
 
 
 def _validate_ollama_base_url(value: str) -> None:
