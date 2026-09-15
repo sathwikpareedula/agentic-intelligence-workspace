@@ -27,3 +27,11 @@ Build a trustworthy agentic AI data and knowledge workspace that turns natural-l
 - Prefer one orchestrator with typed deterministic tools initially. Do not introduce multi-agent architecture unless evaluation evidence justifies it.
 - Treat artifacts, provenance, reproducibility, security, testing, evaluation, and cost as core engineering concerns.
 
+## Cloud Agent environment
+
+- `.cursor/environment.json` defines the Cloud Agent setup. `APP_MODE=demo` is the default: no PostgreSQL or API keys required.
+- Install: `./scripts/cloud-agent-install.sh` (backend venv + frontend `npm ci`).
+- Dev servers start via `terminals`: backend on port 8000, frontend on port 3000.
+- Offline checks: `cd backend && .venv/bin/python -m pytest -q --ignore=tests/test_postgres_integration.py` and the evaluation modules under `app.evaluation.*`.
+- Production mode needs `DATABASE_URL`, `alembic upgrade head`, and orchestrator/embedding API keys; see `compose.yaml` and `.env.example`.
+
