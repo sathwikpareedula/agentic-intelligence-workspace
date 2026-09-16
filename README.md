@@ -27,7 +27,7 @@ Instead of asking an AI assistant to repeat the same analysis every month, the w
 
 **Data / Retrieval:** CSV · XLSX · JSON · Parquet · PDF · REST APIs · read-only PostgreSQL
 
-**Engineering:** Git · GitHub Actions · pytest · Docker
+**Engineering:** Git · GitHub Actions · pytest · Docker · AWS Lambda · Amazon ECR · IAM · CloudWatch Logs
 
 ---
 
@@ -237,6 +237,24 @@ Ollama remains an explicitly configured local option. Current evidence does not 
 
 ---
 
+## Verified AWS Lambda Backend Deployment
+
+The existing FastAPI backend was deployed and remotely validated on AWS Lambda in `APP_MODE=demo` using a container image stored in a private Amazon ECR repository. Mangum adapts Lambda Function URL events to the unchanged FastAPI application.
+
+The cloud validation exercised:
+
+- `GET /health`;
+- `GET /runtime`;
+- `GET /ready`;
+- `POST /datasets/inspect` with a synthetic CSV upload;
+- CloudWatch invocation logs and one-day log retention.
+
+All four HTTPS requests returned `200`; dataset inspection used the real bounded ingestion path and returned schema, type, quality, and provenance metadata. Anonymous Function URL permissions were removed after validation. This was deliberately a bounded backend deployment: the frontend, PostgreSQL/pgvector, RAG persistence, hosted models, and production multi-user controls were not deployed to AWS.
+
+See [Deployment](docs/DEPLOYMENT.md#verified-bounded-aws-lambda-demo) for the verified architecture, operational observations, and teardown commands.
+
+---
+
 ## Trust and Verification
 
 The workspace separates probabilistic reasoning from deterministic execution.
@@ -292,12 +310,12 @@ PostgreSQL 17.4 with pgvector 0.8.6 was verified locally against an isolated pro
 The following remain unverified or outside V1 scope:
 
 - hosted-provider quality on a real credential-backed run;
-- cloud deployment;
+- full-stack production cloud deployment; only the bounded demo-mode FastAPI backend deployment described above was verified;
 - multi-user authentication and authorization;
 - OCR;
 - parser sandboxing;
 - object storage;
-- Docker runtime verification.
+- Docker Compose runtime verification; the Lambda container image itself was built and exercised in AWS CloudShell and Lambda.
 
 The repository does not claim these as completed.
 
