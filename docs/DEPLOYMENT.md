@@ -1,5 +1,37 @@
 # V1 Deployment Readiness
 
+## Verified bounded AWS Lambda demo
+
+The existing FastAPI backend has been deployed and remotely validated as an AWS Lambda container function in `us-east-1`. This is a bounded demo deployment, not the production topology described later in this document.
+
+```text
+Private Amazon ECR repository
+  -> Lambda container function (Python 3.13, x86_64, APP_MODE=demo)
+  -> temporary Lambda Function URL
+  -> CloudWatch Logs
+```
+
+The Lambda image uses `backend/Dockerfile.lambda` and the thin Mangum adapter in `backend/app/lambda_handler.py`; the existing `app.main:app` FastAPI application remains the application entry point. The verified function used 2,048 MB memory, a 30-second timeout, process-local demo storage, deterministic token-hash embeddings, and deterministic demo orchestration. Its execution role could only create streams and write events in that function's pre-created CloudWatch log group. The ECR repository policy allowed the Lambda service to retrieve images from that dedicated repository only for the named function.
+
+Remote HTTPS validation returned `200` for `/health`, `/runtime`, `/ready`, and a real multipart `POST /datasets/inspect`. The inspection request parsed a two-row synthetic CSV through the existing bounded ingestion path and returned column types, missing-value counts, duplicate counts, byte size, and upload provenance. CloudWatch recorded every invocation. The initial cold-start path first recorded an approximately 10-second initialization timeout; the subsequent invocation then completed successfully in approximately 28.9 seconds. It should not be interpreted as a clean 28.9-second cold start with no initialization issue. Warm health/readiness invocations completed in about 4-5 ms, CSV inspection completed in about 508 ms, and peak observed memory was 273 MB. This behavior is acceptable for the bounded validation but should be optimized and remeasured before treating Lambda as a latency-sensitive production target.
+
+The Function URL used anonymous access only during the validation window. Both anonymous resource-policy statements were removed immediately afterward, and a subsequent request returned `403`. The account did not permit reserved concurrency because doing so would have reduced unreserved concurrency below its required minimum, so leaving an anonymous URL enabled would not meet the intended cost-control boundary.
+
+No frontend, PostgreSQL/pgvector database, RAG persistence, model provider, secret, VPC, API Gateway, VM, container service, or Kubernetes resource was deployed. Lambda has no idle compute charge. The observed private ECR image size was 320,066,553 bytes (approximately 320 MB); applicable AWS free-plan credits, allowances, and pricing vary, and the image remains stored until the repository is deleted. CloudWatch log retention is one day.
+
+To remove the validated resources after recording any required evidence, run these commands from an authenticated AWS shell in the deployment region. They are destructive and must be reviewed before use:
+
+```bash
+aws lambda delete-function-url-config --region us-east-1 --function-name agentic-intelligence-workspace-demo
+aws lambda delete-function --region us-east-1 --function-name agentic-intelligence-workspace-demo
+aws logs delete-log-group --region us-east-1 --log-group-name /aws/lambda/agentic-intelligence-workspace-demo
+aws ecr delete-repository --region us-east-1 --repository-name agentic-intelligence-workspace-lambda-demo --force
+aws iam delete-role-policy --role-name agentic-intelligence-workspace-lambda-demo-role --policy-name agentic-intelligence-workspace-demo-logs
+aws iam delete-role --role-name agentic-intelligence-workspace-lambda-demo-role
+```
+
+The commands intentionally contain no account ID, credentials, Function URL, or environment-specific secret.
+
 ## Recommended shape
 
 Use one Next.js frontend, one FastAPI backend, PostgreSQL with pgvector, durable artifact storage mounted at `ARTIFACT_STORAGE_PATH`, and environment-managed provider secrets. Run Alembic as a separate one-shot release step before starting the backend. The application does not migrate its schema during API startup.

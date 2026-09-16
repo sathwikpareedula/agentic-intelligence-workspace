@@ -23,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+aws = [
+    "mangum>=0.19,<1",
+]
 test = [
     "httpx>=0.27,<1",
     "pytest>=8,<10",
